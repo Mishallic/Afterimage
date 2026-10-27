@@ -70,6 +70,24 @@ class TimelineTest(unittest.TestCase):
         dropped = timeline.transients(threshold=20, window=60)
         np.testing.assert_array_equal(dropped, [False, True, True, False])
 
+    def test_paint_is_dated_to_when_it_was_first_seen(self) -> None:
+        white, blue = (228, 228, 228), (30, 90, 160)
+        frames = [np.full((40, 40, 3), white, np.uint8) for _ in range(12)]
+        for frame in frames[3:]:
+            frame[10:20, 10:20] = blue
+        hand = np.zeros((40, 40), dtype=bool)
+        hand[5:25, 5:25] = True
+        plate = CleanPlate(frames[0], CleanPlateConfig(dilate_px=2, persist_frames=3, record=True))
+        forward = [plate.update(frame, hand if 4 <= i <= 6 else None).copy() for i, frame in enumerate(frames)]
+        replayed = [canvas.copy() for canvas, _ in plate.timeline().replay(frames[0], len(frames))]
+
+        def first_blue(canvases: list[np.ndarray]) -> int:
+            return next(i for i, canvas in enumerate(canvases) if (canvas[15, 15] == blue).all())
+
+        self.assertEqual(first_blue(forward), 8)  # confirmed once seen 3 times: frames 3, 7 and 8
+        self.assertEqual(first_blue(replayed), 3)
+        self.assertEqual(plate.painted_at[15, 15], 3)
+
     def test_painted_at(self) -> None:
         timeline = Timeline(
             (2, 2), np.array([0, 3, 0], np.int32), np.array([1, 2, 5], np.int32),

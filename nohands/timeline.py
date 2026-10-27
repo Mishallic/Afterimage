@@ -15,7 +15,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Timeline:
-    """Every committed change: which pixel, at which update, from what colour to what colour."""
+    """Every committed change: which pixel, from which update on, from what colour to what colour."""
 
     shape: tuple[int, int]
     pixel: np.ndarray
@@ -25,15 +25,16 @@ class Timeline:
 
     @classmethod
     def concat(
-        cls, shape: tuple[int, int], chunks: list[tuple[np.ndarray, int, np.ndarray, np.ndarray]]
+        cls, shape: tuple[int, int], chunks: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
     ) -> Timeline:
+        """Join (pixels, update per pixel, before, after) chunks."""
         if not chunks:
             empty = np.zeros(0, dtype=np.int32)
             return cls(shape, empty, empty, np.zeros((0, 3), np.uint8), np.zeros((0, 3), np.uint8))
         return cls(
             shape,
             np.concatenate([pixels for pixels, _, _, _ in chunks]).astype(np.int32),
-            np.concatenate([np.full(len(pixels), frame, np.int32) for pixels, frame, _, _ in chunks]),
+            np.concatenate([frames for _, frames, _, _ in chunks]).astype(np.int32),
             np.concatenate([before for _, _, before, _ in chunks]),
             np.concatenate([after for _, _, _, after in chunks]),
         )
