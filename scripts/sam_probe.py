@@ -48,7 +48,9 @@ async def run(args: argparse.Namespace) -> None:
     union = [np.zeros((size[1], size[0]), dtype=bool) for _ in frames]
     for concept in args.concepts:
         started = time.perf_counter()
-        result = await sam.segment_concept(api, file_id, concept, work / f"{sam.slug(concept)}.events.ndjson")
+        result = await sam.segment_concept(
+            api, file_id, concept, work / f"{sam.slug(concept)}.events.ndjson", frames=len(frames)
+        )
         segmented = time.perf_counter()
         masks = sam.frame_masks(result, size)
         decoded = time.perf_counter()

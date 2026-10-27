@@ -3,8 +3,8 @@
     python scripts/nohands_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96 --aspect 1.5
     python scripts/nohands_run.py data/synthetic.mp4 --masks motion --fps 2 --width 640
 
-Corners are fractions of the camera frame (top-left, top-right, bottom-right, bottom-left);
-scripts/first_frame.py helps read them off. Outputs land in out/<video name>/: timelapse.mp4,
+Corners are fractions of the camera frame (top-left, top-right, bottom-right, bottom-left).
+Without --corners, Spark's scan finds them; scripts/first_frame.py helps read them off by hand. Outputs land in out/<video name>/: timelapse.mp4,
 raw.mp4, compare.mp4, reel.mp4, reel-landscape.mp4, stats.json, receipt.json and index.html.
 Check any output against its footage with scripts/nohands_verify.py.
 """
@@ -29,6 +29,8 @@ def parse_args() -> tuple[Path, Params, str, bool]:
     parser.add_argument("--masks", choices=["sam", "motion", "none"], default=defaults.masks)
     parser.add_argument("--concept", action="append", dest="concepts",
                         help="SAM noun phrase, repeatable (default: person, hand, paintbrush)")
+    parser.add_argument("--no-scan", action="store_true",
+                        help="skip Spark's scan (it adds things to track and finds the canvas corners)")
     parser.add_argument("--fps", type=float, default=defaults.fps, help="frames sampled per second of footage")
     parser.add_argument("--width", type=int, default=defaults.width, help="working width")
     parser.add_argument("--sam-width", type=int, default=defaults.sam_width, help="width of the copy sent to SAM")
@@ -56,6 +58,7 @@ def parse_args() -> tuple[Path, Params, str, bool]:
         revert_window=args.revert_window,
         concepts=tuple(args.concepts) if args.concepts else defaults.concepts,
         masks=args.masks,
+        scan=not args.no_scan,
         output_fps=args.output_fps,
     )
     return args.video, params, args.title, not args.no_reels

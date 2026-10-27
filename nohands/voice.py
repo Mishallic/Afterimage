@@ -11,9 +11,10 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import wave
 from pathlib import Path
 
-from . import media
+from . import ledger, media
 from .config import meta_api_key
 
 URL = "https://api.meta.ai/v1/asr/transcribe"
@@ -53,10 +54,19 @@ def transcribe(
         },
         method="POST",
     )
+    with wave.open(str(wav), "rb") as audio:
+        seconds = round(audio.getnframes() / audio.getframerate(), 2)
+    described = {"file": wav.name, "sha256": ledger.file_sha256(wav), "seconds": seconds, "languages": list(languages)}
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(request, timeout=900) as response:
-                return json.loads(response.read())
+            # The transcript itself stays out of the ledger: it's the painter's own words.
+            with ledger.call(
+                "asr/transcribe", f"transcribe {wav.name}", model=MODEL, attempt=attempt + 1, **described
+            ) as logged, urllib.request.urlopen(request, timeout=900) as response:
+                result = json.loads(response.read())
+                logged["turns"] = len(result.get("turns", []))
+                logged["transcript_sha256"] = ledger.sha256(result.get("transcript", ""))
+                return result
         except urllib.error.HTTPError as error:
             # Failed and rate-limited requests aren't billed, so retrying is free.
             if error.code in (429, 500) and attempt < retries:

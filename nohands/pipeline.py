@@ -14,18 +14,19 @@ import json
 import platform
 import subprocess
 from contextlib import ExitStack, closing
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, fields, replace
 from itertools import islice
 from pathlib import Path
 
 import numpy as np
 
-from . import media, sam
+from . import ledger, media, sam, spark
 from .autocut import auto_edl
 from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
 from .config import find_tool
 from .devmasks import MotionMasker
-from .geometry import Warper, canvas_size, polygon_mask
+from .geometry import Warper, canvas_size, order_corners, polygon_mask
+from .ledger import file_sha256
 from .masks import resize_nearest
 from .occluders import occluders, painted
 from .receipt import receipt as pixel_receipt, time_map
@@ -36,6 +37,7 @@ from .timeline import Timeline
 
 RECEIPT_VERSION = 1
 START_SCAN_FRAMES = 120
+LEDGER = "ledger.jsonl"
 
 
 @dataclass(frozen=True)
@@ -56,6 +58,8 @@ class Params:
     concepts: tuple[str, ...] = ("person", "hand", "paintbrush")
     masks: str = "sam"
     """sam (the product), motion (offline development stand-in) or none."""
+    scan: bool = True
+    """With SAM masks: Spark watches the session first, adds what else to track and finds the canvas."""
     output_fps: float = 30.0
 
     @property
@@ -116,14 +120,6 @@ class Cleaned:
     occlusion: list[float]
 
 
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        while chunk := handle.read(1 << 20):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def toolchain() -> dict:
     ffmpeg = subprocess.run([find_tool("ffmpeg"), "-version"], capture_output=True, text=True).stdout
     return {
@@ -138,6 +134,47 @@ def _sam_work(out: Path, params: Params, proxy_size: tuple[int, int]) -> Path:
     return out / "sam" / tag
 
 
+def _proxy(video: Path, params: Params, proxy_size: tuple[int, int], work: Path) -> tuple[Path, int]:
+    """The low-fps copy that SAM and Spark see, made once, and its number of frames."""
+    proxy = work / "proxy.mp4"
+    if not proxy.exists():
+        media.make_proxy(video, proxy, fps=params.fps, size=proxy_size, seconds=params.seconds)
+    info = media.probe(proxy)
+    return proxy, round(info.duration * info.fps)
+
+
+def spark_scan(video: Path, params: Params, info: media.VideoInfo, out: Path) -> tuple[Params, dict]:
+    """Spark watches a 48-second digest of the session: what else to track, and where the canvas is.
+
+    One Spark call decides which extra SAM passes are worth paying for, instead of running SAM on
+    every concept that might matter. The answer is cached, so re-runs never ask again, and the
+    receipt records the parameters it led to, so verify doesn't need it.
+    """
+    proxy_size = media.output_size(info, params.sam_width)
+    proxy, frames = _proxy(video, params, proxy_size, _sam_work(out, params, proxy_size))
+    picks = spark.scan_picks(frames)
+    answer_file = out / "spark" / "scan.json"
+    if not answer_file.exists():
+        answer_file.parent.mkdir(parents=True, exist_ok=True)
+        digest = answer_file.with_name("scan.mp4")
+        spark.make_scan_video(proxy, digest, fps=params.fps, size=proxy_size, frames=frames)
+        answer = spark.scan_answer(spark.client(), digest)
+        answer_file.write_text(json.dumps(answer, indent=2), encoding="utf-8")
+    scan = spark.parse_scan(json.loads(answer_file.read_text(encoding="utf-8")), picks, proxy_size)
+    added = spark.extra_concepts(scan, params.concepts)
+    corners = params.corners
+    if corners is None and scan.canvas_corners is not None:
+        corners = tuple((round(float(x), 4), round(float(y), 4)) for x, y in order_corners(scan.canvas_corners))
+    found = {
+        "file": answer_file.relative_to(out).as_posix(),
+        "sha256": file_sha256(answer_file),
+        "seen": [{"phrase": o.phrase, "kind": o.kind} for o in scan.occluders],
+        "added_concepts": added,
+        "canvas_corners": corners if corners != params.corners else None,
+    }
+    return replace(params, concepts=params.concepts + tuple(added), corners=corners), found
+
+
 async def _sam_objects(
     video: Path, params: Params, proxy_size: tuple[int, int], events: dict[str, Path]
 ) -> dict[int, dict]:
@@ -146,13 +183,11 @@ async def _sam_objects(
         results = {concept: await sam.parse_cached(path) for concept, path in events.items()}
     else:
         work = next(iter(events.values())).parent
-        proxy = work / "proxy.mp4"
-        if not proxy.exists():
-            media.make_proxy(video, proxy, fps=params.fps, size=proxy_size, seconds=params.seconds)
+        proxy, frames = _proxy(video, params, proxy_size, work)
         api = sam.client()
         file_id = await sam.upload_cached(api, proxy, work / "file_id.txt")
         results = {
-            concept: await sam.segment_concept(api, file_id, concept, path)
+            concept: await sam.segment_concept(api, file_id, concept, path, frames=frames)
             for concept, path in events.items()
         }
     objects: dict[int, dict] = {}
@@ -185,9 +220,13 @@ def sam_occluders(
 
 def clean(
     video: Path, params: Params, geometry: Geometry, masks: dict[int, np.ndarray] | None,
-    *, raw_out: Path | None,
+    *, raw_out: Path | None, hidden: frozenset[int] = frozenset(),
 ) -> Cleaned:
-    """Pass 1: run the clean plate forward recording every change, then veto the transient ones."""
+    """Pass 1: run the clean plate forward recording every change, then veto the transient ones.
+
+    Frames in `hidden` count as fully covered, so nothing in them is used: the evaluation holds
+    them out to score against.
+    """
 
     def frames():
         return (
@@ -195,13 +234,16 @@ def clean(
             for frame in media.read_frames(video, fps=params.fps, size=geometry.frame_size, seconds=params.seconds)
         )
 
+    everything = np.ones((geometry.size[1], geometry.size[0]), dtype=bool)
     motion = MotionMasker() if params.masks == "motion" else None
     if masks is not None:
         with closing(frames()) as head:
             start = first_visible_canvas(
                 islice(head, START_SCAN_FRAMES),
-                (geometry.view_mask(masks.get(index)) for index in range(START_SCAN_FRAMES)),
+                (everything if index in hidden else geometry.view_mask(masks.get(index))
+                 for index in range(START_SCAN_FRAMES)),
                 dilate_px=params.dilate,
+                steady_frames=params.persist_frames,
             )
     else:
         with closing(frames()) as head:
@@ -218,6 +260,8 @@ def clean(
                 occluder = motion.mask(frame)
             else:
                 occluder = None
+            if index in hidden:
+                occluder = everything
             plate.update(frame, occluder)
             occlusion.append(0.0 if occluder is None else float(occluder.mean()))
             if raw is not None:
@@ -251,16 +295,21 @@ def replay(
 
 
 def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool = True) -> dict:
-    """Process one session into out/: videos, stats, reels, match page and receipt.json."""
+    """Process one session into out/: videos, stats, reels, match page, receipt.json and the ledger of Meta calls."""
     out.mkdir(parents=True, exist_ok=True)
     info = media.probe(video)
-    geometry = Geometry.of(info, params)
-    masks, streams, kept_as_painted = None, [], []
+    masks, streams, kept_as_painted, scan = None, [], [], None
     if params.masks == "sam":
-        masks, streams, kept_as_painted = sam_occluders(video, params, info, out)
+        with ledger.recording(out / LEDGER):
+            if params.scan:
+                params, scan = spark_scan(video, params, info, out)
+                print(f"  Spark saw: {', '.join(item['phrase'] for item in scan['seen']) or 'nothing'}; "
+                      f"tracking {', '.join(params.concepts)}")
+            masks, streams, kept_as_painted = sam_occluders(video, params, info, out)
         if kept_as_painted:
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
 
+    geometry = Geometry.of(info, params)
     cleaned = clean(video, params, geometry, masks, raw_out=out / "raw.mp4")
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
     tracker = StatsTracker(cleaned.start, params.fps)
@@ -290,7 +339,9 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
             "duration_s": info.duration,
         },
         "params": params.to_dict(),
+        "spark_scan": scan,
         "sam_streams": streams,
+        "meta_calls": ledger.summary(out / LEDGER),
         "kept_as_painted": kept_as_painted,
         "timeline": {"changes": len(cleaned.timeline), "vetoed": cleaned.vetoed, "kept": len(cleaned.kept)},
         "output": {

@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from openai import OpenAI
 
-from . import imaging, media
+from . import imaging, ledger, media
 from .config import META_BASE_URL, SPARK_MODEL, meta_api_key
 
 GRID = 1000
@@ -22,6 +22,11 @@ GRID = 1000
 SCAN_FRAMES = 96
 SCAN_FPS = 2.0
 CRITIC_WIDTH = 1280
+OCCLUDER_KINDS = ["body", "hand", "brush", "tool", "animal", "other"]
+TRACKED_ANYWAY = ("body", "hand", "brush")
+"""Kinds the default SAM concepts (person, hand, paintbrush) already cover."""
+MAX_EXTRA_CONCEPTS = 3
+"""Each extra concept is another SAM pass over the whole session: $0.72 per footage-hour at 1 fps."""
 
 _BOX = {"type": "array", "items": {"type": "number"}}
 
@@ -35,9 +40,10 @@ SCAN_SCHEMA = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["phrase", "sightings"],
+                "required": ["phrase", "kind", "sightings"],
                 "properties": {
                     "phrase": {"type": "string"},
+                    "kind": {"type": "string", "enum": OCCLUDER_KINDS},
                     "sightings": {
                         "type": "array",
                         "items": {
@@ -105,9 +111,11 @@ Find every physical thing that, at any moment, is between the camera and the pai
 the painter's body and hands, tools (brushes, palette knife, rag, palette, cup) and anything else
 (a pet, a phone). Do NOT include anything painted on the canvas, even if it shows hands or people.
 For each, give a short noun phrase a segmentation model can use (like "person", "paintbrush",
-"rag") and up to 3 sightings: the second in this video and a box [x_min, y_min, x_max, y_max] on a
-0-1000 grid with (0,0) at the top-left. Also give the four corners of the painting surface as
-[x, y] points on the same grid, ordered top-left, top-right, bottom-right, bottom-left."""
+"rag"), its kind (body: the painter's body, arms or clothes; hand; brush; tool: any other object
+they hold or put down; animal; other) and up to 3 sightings: the second in this video and a box
+[x_min, y_min, x_max, y_max] on a 0-1000 grid with (0,0) at the top-left. Also give the four
+corners of the painting surface as [x, y] points on the same grid, ordered top-left, top-right,
+bottom-right, bottom-left."""
 
 CRITIC_PROMPT = """You are an object grounding expert checking a video reconstruction.
 Each image shows the camera frame on the LEFT and our reconstruction of the painting on the RIGHT.
@@ -134,6 +142,7 @@ class Sighting:
 @dataclass(frozen=True)
 class Occluder:
     phrase: str
+    kind: str
     sightings: list[Sighting]
 
 
@@ -164,12 +173,16 @@ def client() -> OpenAI:
 
 
 def upload(api: OpenAI, path: Path, *, expires_days: int = 7) -> str:
-    with path.open("rb") as handle:
+    with ledger.call(
+        "files.create", f"upload {path.name} for Spark",
+        file=path.name, bytes=path.stat().st_size, sha256=ledger.file_sha256(path),
+    ) as logged, path.open("rb") as handle:
         uploaded = api.files.create(
             purpose="user_data",
             file=handle,
             expires_after={"anchor": "created_at", "seconds": expires_days * 86_400},
         )
+        logged["file_id"] = uploaded.id
     return uploaded.id
 
 
@@ -178,18 +191,37 @@ def image_block(frame: np.ndarray) -> dict:
     return {"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}"}
 
 
+def _described(content: list[dict]) -> dict:
+    """What the ledger keeps of a request: the instructions, and media only by hash or file id."""
+    texts = [block["text"] for block in content if block["type"] == "input_text"]
+    return {
+        "prompt": texts[0] if texts else "",
+        "images": [ledger.sha256(block["image_url"]) for block in content if block["type"] == "input_image"],
+        "files": [block["file_id"] for block in content if block["type"] in ("input_video", "input_file")],
+    }
+
+
 def ask_json(
     api: OpenAI, content: list[dict], schema: dict, name: str, *, effort: str = "medium",
     max_output_tokens: int = 8000,
 ) -> dict:
-    response = api.responses.create(
-        model=SPARK_MODEL,
-        input=[{"type": "message", "role": "user", "content": content}],
-        reasoning={"effort": effort},
-        max_output_tokens=max_output_tokens,
-        text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
-    )
-    return json.loads(response.output_text)
+    with ledger.call(
+        "responses.create", name, model=SPARK_MODEL,
+        effort=effort, max_output_tokens=max_output_tokens, **_described(content),
+    ) as logged:
+        response = api.responses.create(
+            model=SPARK_MODEL,
+            input=[{"type": "message", "role": "user", "content": content}],
+            reasoning={"effort": effort},
+            max_output_tokens=max_output_tokens,
+            text={"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
+        )
+        logged["id"] = response.id
+        usage = getattr(response, "usage", None)
+        logged["usage"] = usage.model_dump() if hasattr(usage, "model_dump") else usage
+        answer = json.loads(response.output_text)
+        logged["answer"] = answer
+    return answer
 
 
 def to_pixels(box: list[float], size: tuple[int, int]) -> tuple[int, int, int, int]:
@@ -228,16 +260,22 @@ def _scan_frame(second: float, picks: list[int]) -> int:
     return picks[min(max(round(second * SCAN_FPS), 0), len(picks) - 1)]
 
 
-def occluder_scan(api: OpenAI, scan_video: Path, picks: list[int], size: tuple[int, int]) -> Scan:
-    answer = ask_json(
+def scan_answer(api: OpenAI, scan_video: Path) -> dict:
+    """Spark's raw answer about a scan video, for caching; parse_scan turns it into a Scan."""
+    return ask_json(
         api,
         [{"type": "input_text", "text": SCAN_PROMPT}, {"type": "input_video", "file_id": upload(api, scan_video)}],
         SCAN_SCHEMA,
         "occluder_scan",
     )
+
+
+def parse_scan(answer: dict, picks: list[int], size: tuple[int, int]) -> Scan:
+    """A scan answer in session frames (`picks` made the scan video) and pixels of `size`."""
     occluders = [
         Occluder(
-            phrase=item["phrase"].strip().lower(),
+            phrase=" ".join(item["phrase"].lower().split()),
+            kind=item["kind"],
             sightings=[
                 Sighting(_scan_frame(sighting["second"], picks), to_pixels(sighting["box"], size))
                 for sighting in item["sightings"][:3]
@@ -250,6 +288,18 @@ def occluder_scan(api: OpenAI, scan_video: Path, picks: list[int], size: tuple[i
     corners = [point[:2] for point in answer["canvas_corners"] if len(point) >= 2]
     canvas = np.clip(np.array(corners, dtype=np.float64) / GRID, 0, 1) if len(corners) == 4 else None
     return Scan(occluders, canvas)
+
+
+def extra_concepts(scan: Scan, existing: tuple[str, ...], limit: int = MAX_EXTRA_CONCEPTS) -> list[str]:
+    """What Spark saw that's worth a SAM pass of its own, beyond the painter, hands and brushes."""
+    seen = {phrase.replace(" ", "") for phrase in existing}
+    extra = []
+    for occluder in scan.occluders:
+        key = occluder.phrase.replace(" ", "")
+        if occluder.kind not in TRACKED_ANYWAY and key not in seen:
+            seen.add(key)
+            extra.append(occluder.phrase)
+    return extra[:limit]
 
 
 def critic(api: OpenAI, pairs: list[tuple[np.ndarray, np.ndarray]]) -> list[Defect]:

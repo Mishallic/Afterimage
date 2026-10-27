@@ -25,6 +25,7 @@ from meta_sam_parser import (
 )
 from openai import AsyncOpenAI
 
+from . import ledger
 from .config import META_BASE_URL, SAM_MODEL, meta_api_key
 from .masks import Blob, resize_nearest
 
@@ -52,12 +53,16 @@ async def upload_cached(
     """Upload once and remember the file id next to the outputs."""
     if id_file.exists():
         return id_file.read_text(encoding="utf-8").strip()
-    with video.open("rb") as handle:
+    with ledger.call(
+        "files.create", f"upload {video.name} for SAM",
+        file=video.name, bytes=video.stat().st_size, sha256=ledger.file_sha256(video),
+    ) as logged, video.open("rb") as handle:
         uploaded = await api.files.create(
             purpose="user_data",
             file=handle,
             expires_after={"anchor": "created_at", "seconds": expires_days * 86_400},
         )
+        logged["file_id"] = uploaded.id
     id_file.parent.mkdir(parents=True, exist_ok=True)
     id_file.write_text(uploaded.id, encoding="utf-8")
     return uploaded.id
@@ -95,14 +100,29 @@ async def parse_cached(events_file: Path) -> VideoSegmentationResult:
 
 
 async def _segment(
-    api: AsyncOpenAI, file_id: str, prompt: str, events_file: Path, direction: str
+    api: AsyncOpenAI, file_id: str, prompt: str, events_file: Path, direction: str,
+    *, purpose: str, frames: int | None,
 ) -> VideoSegmentationResult:
     if not events_file.exists():
         events_file.parent.mkdir(parents=True, exist_ok=True)
         partial = events_file.with_suffix(".partial")
-        with partial.open("w", encoding="utf-8") as handle:
-            async for event in _stream_events(api, file_id, prompt, direction):
-                handle.write(json.dumps(event) + "\n")
+        with ledger.call(
+            "responses.create", purpose, model=SAM_MODEL,
+            prompt=prompt, file_id=file_id, direction=direction, frames=frames,
+            est_cost_usd=None if frames is None else round(estimated_cost(frames), 4),
+        ) as logged:
+            count = 0
+            with partial.open("w", encoding="utf-8") as handle:
+                async for event in _stream_events(api, file_id, prompt, direction):
+                    handle.write(json.dumps(event) + "\n")
+                    count += 1
+                    body = event.get("response")
+                    if isinstance(body, dict):
+                        logged["id"] = body.get("id") or logged.get("id")
+                        if body.get("usage"):
+                            logged["usage"] = body["usage"]
+            logged["events"] = count
+            logged["events_sha256"] = ledger.file_sha256(partial)
         partial.replace(events_file)
     return await parse_cached(events_file)
 
@@ -114,9 +134,12 @@ async def segment_concept(
     events_file: Path,
     *,
     direction: str = "forward",
+    frames: int | None = None,
 ) -> VideoSegmentationResult:
     """Track every instance of one noun phrase through the video (SAM takes one concept per call)."""
-    return await _segment(api, file_id, concept, events_file, direction)
+    return await _segment(
+        api, file_id, concept, events_file, direction, purpose=f"track {concept!r}", frames=frames
+    )
 
 
 def box_prompt(size: tuple[int, int], boxes: list[tuple[int, tuple[int, int, int, int]]]) -> str:
@@ -134,13 +157,18 @@ async def segment_boxes(
     size: tuple[int, int],
     boxes: list[tuple[int, tuple[int, int, int, int]]],
     events_file: Path,
+    *,
+    frames: int | None = None,
 ) -> VideoSegmentationResult:
     """Track specific things from a box on one frame each, both ways through the video.
 
     This is how the critic's findings come back: Spark says where a leftover is,
     SAM follows it through every frame it appears in.
     """
-    return await _segment(api, file_id, box_prompt(size, boxes), events_file, "both")
+    return await _segment(
+        api, file_id, box_prompt(size, boxes), events_file, "both",
+        purpose=f"track {min(len(boxes), MAX_OBJECTS_PER_CALL)} boxed object(s)", frames=frames,
+    )
 
 
 def frame_objects(result: VideoSegmentationResult, *, prefix: str = "") -> dict[int, dict[str, Blob]]:

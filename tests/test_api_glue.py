@@ -2,9 +2,27 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 import unittest
+from dataclasses import replace
+from pathlib import Path
+from unittest import mock
 
-from nohands import sam, spark, voice
+from nohands import ledger, media, pipeline, sam, spark, voice
+
+SCAN_ANSWER = {
+    "occluders": [
+        {"phrase": "Person", "kind": "body", "sightings": [{"second": 1.0, "box": [100, 100, 400, 900]}]},
+        {"phrase": "paint  rag", "kind": "tool", "sightings": [{"second": 20.0, "box": [700, 800, 800, 900]}]},
+        {"phrase": "paintbrush", "kind": "brush", "sightings": []},
+        {"phrase": "cat", "kind": "animal", "sightings": [{"second": 40.0, "box": [0, 0, 100, 100]}, {"second": 41.0, "box": [1, 2]}]},
+        {"phrase": "palette", "kind": "tool", "sightings": []},
+        {"phrase": "cup", "kind": "tool", "sightings": []},
+        {"phrase": " ", "kind": "other", "sightings": []},
+    ],
+    "canvas_corners": [[880, 70], [120, 80], [100, 960], [900, 950]],
+}
 
 
 def strict_problems(schema: dict, path: str = "$") -> list[str]:
@@ -41,6 +59,52 @@ class SparkTest(unittest.TestCase):
         self.assertEqual(spark.scan_picks(40), list(range(40)))
         self.assertEqual(spark._scan_frame(0.0, picks), 0)
         self.assertEqual(spark._scan_frame(999.0, picks), 10_799)
+
+    def test_scan_answers_map_back_to_session_frames_and_pixels(self) -> None:
+        scan = spark.parse_scan(SCAN_ANSWER, spark.scan_picks(960), (640, 360))
+        self.assertEqual([o.phrase for o in scan.occluders], ["person", "paint rag", "paintbrush", "cat", "palette", "cup"])
+        cat = scan.occluders[3]
+        self.assertEqual(cat.sightings, [spark.Sighting(spark.scan_picks(960)[80], (0, 0, 64, 36))])
+        self.assertAlmostEqual(scan.canvas_corners[0][0], 0.88)
+
+    def test_only_things_beyond_painter_hands_and_brushes_get_a_sam_pass(self) -> None:
+        scan = spark.parse_scan(SCAN_ANSWER, spark.scan_picks(960), (640, 360))
+        self.assertEqual(spark.extra_concepts(scan, ("person", "hand", "paintbrush")), ["paint rag", "cat", "palette"])
+        self.assertEqual(spark.extra_concepts(scan, ("person", "paintrag")), ["cat", "palette", "cup"])
+
+
+class SparkScanTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.out = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.out)
+        self.info = media.VideoInfo(1280, 720, 480.0, 30.0, False)
+
+    def scan(self, params: pipeline.Params, asked: mock.Mock) -> tuple[pipeline.Params, dict]:
+        with (
+            mock.patch.object(pipeline, "_proxy", return_value=(self.out / "proxy.mp4", 960)),
+            mock.patch.object(spark, "make_scan_video"),
+            mock.patch.object(spark, "client"),
+            mock.patch.object(spark, "scan_answer", asked),
+        ):
+            return pipeline.spark_scan(Path("session.mp4"), params, self.info, self.out)
+
+    def test_spark_adds_concepts_and_corners_once_then_the_answer_is_reused(self) -> None:
+        asked = mock.Mock(return_value=SCAN_ANSWER)
+        params, found = self.scan(pipeline.Params(), asked)
+        again, _ = self.scan(pipeline.Params(), asked)
+        asked.assert_called_once()
+        self.assertEqual(params, again)
+        self.assertEqual(params.concepts, ("person", "hand", "paintbrush", "paint rag", "cat", "palette"))
+        self.assertEqual(params.corners, ((0.12, 0.08), (0.88, 0.07), (0.9, 0.95), (0.1, 0.96)))
+        self.assertEqual(found["canvas_corners"], params.corners)
+        self.assertEqual(found["sha256"], ledger.file_sha256(self.out / "spark" / "scan.json"))
+        self.assertEqual(pipeline.Params.from_dict(params.to_dict()), params)
+
+    def test_corners_given_by_hand_win(self) -> None:
+        mine = replace(pipeline.Params(), corners=((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+        params, found = self.scan(mine, mock.Mock(return_value=SCAN_ANSWER))
+        self.assertEqual(params.corners, mine.corners)
+        self.assertIsNone(found["canvas_corners"])
 
 
 class SamPromptTest(unittest.TestCase):
