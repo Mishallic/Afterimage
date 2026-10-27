@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# private planning notes (not part of the submission)
+notes/
+
+# footage and pipeline outputs (large, personal)
+data/
+out/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# node
+node_modules/
