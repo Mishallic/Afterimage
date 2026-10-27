@@ -1,0 +1,110 @@
+[
+  {
+    "scenario": "moving hand + shadow",
+    "method": "NoHands",
+    "mean_delta_e": 0.17,
+    "final_delta_e": 0.01,
+    "artifact_frames_pct": 0.0,
+    "artifact_pixels_pct": 0.005,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "moving hand + shadow",
+    "method": "NoHands without veto",
+    "mean_delta_e": 0.21,
+    "final_delta_e": 0.01,
+    "artifact_frames_pct": 41.1,
+    "artifact_pixels_pct": 0.208,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "moving hand + shadow",
+    "method": "masked median (Loomis-style)",
+    "mean_delta_e": 0.92,
+    "final_delta_e": 0.9,
+    "artifact_frames_pct": 47.8,
+    "artifact_pixels_pct": 0.283,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "moving hand + shadow",
+    "method": "temporal median (no masks)",
+    "mean_delta_e": 1.67,
+    "final_delta_e": 0.98,
+    "artifact_frames_pct": 92.2,
+    "artifact_pixels_pct": 3.902,
+    "painter_visible_frames_pct": 57.8
+  },
+  {
+    "scenario": "resting hand + static shadow",
+    "method": "NoHands",
+    "mean_delta_e": 0.0,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 0.0,
+    "artifact_pixels_pct": 0.0,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "resting hand + static shadow",
+    "method": "NoHands without veto",
+    "mean_delta_e": 0.22,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 66.7,
+    "artifact_pixels_pct": 0.965,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "resting hand + static shadow",
+    "method": "masked median (Loomis-style)",
+    "mean_delta_e": 0.2,
+    "final_delta_e": 0.01,
+    "artifact_frames_pct": 55.6,
+    "artifact_pixels_pct": 0.978,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "resting hand + static shadow",
+    "method": "temporal median (no masks)",
+    "mean_delta_e": 1.34,
+    "final_delta_e": 0.67,
+    "artifact_frames_pct": 93.3,
+    "artifact_pixels_pct": 6.359,
+    "painter_visible_frames_pct": 77.8
+  },
+  {
+    "scenario": "painted hand on canvas",
+    "method": "NoHands",
+    "mean_delta_e": 0.01,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 0.0,
+    "artifact_pixels_pct": 0.0,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "painted hand on canvas",
+    "method": "NoHands without veto",
+    "mean_delta_e": 0.03,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 37.8,
+    "artifact_pixels_pct": 0.149,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "painted hand on canvas",
+    "method": "masked median (Loomis-style)",
+    "mean_delta_e": 0.06,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 27.8,
+    "artifact_pixels_pct": 0.167,
+    "painter_visible_frames_pct": 0.0
+  },
+  {
+    "scenario": "painted hand on canvas",
+    "method": "temporal median (no masks)",
+    "mean_delta_e": 0.55,
+    "final_delta_e": 0.0,
+    "artifact_frames_pct": 83.3,
+    "artifact_pixels_pct": 2.789,
+    "painter_visible_frames_pct": 37.8
+  }
+]
