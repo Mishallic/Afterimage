@@ -14,13 +14,13 @@ import json
 import platform
 import subprocess
 from contextlib import ExitStack, closing
-from dataclasses import asdict, dataclass, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from itertools import islice
 from pathlib import Path
 
 import numpy as np
 
-from . import ledger, media, sam, spark
+from . import critic, ledger, media, sam, spark
 from .autocut import auto_edl
 from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
 from .config import find_tool
@@ -28,7 +28,7 @@ from .devmasks import MotionMasker
 from .geometry import Warper, canvas_size, order_corners, polygon_mask
 from .ledger import file_sha256
 from .masks import resize_nearest
-from .occluders import occluders, painted
+from .occluders import Objects, occluders, painted
 from .receipt import receipt as pixel_receipt, time_map
 from .render import Sources, render
 from .report import write_report
@@ -40,6 +40,8 @@ START_SCAN_FRAMES = 120
 LEDGER = "ledger.jsonl"
 MOMENTS_WIDTH = 960
 """Width of the natural-speed copy the pixel receipt plays from."""
+CRITIC_PREFIX = "critic"
+"""Objects SAM tracked from the critic's boxes are keyed critic<round>:<id>; they're never 'painted'."""
 MAX_LAYERS = 48
 DIVE_SECONDS = 4.0
 UNDER_STILLS = 8
@@ -65,6 +67,8 @@ class Params:
     """sam (the product), motion (offline development stand-in) or none."""
     scan: bool = True
     """With SAM masks: Spark watches the session first, adds what else to track and finds the canvas."""
+    critic_rounds: int = 2
+    """With SAM masks: how many times Spark may inspect the result and have SAM fix what it finds."""
     output_fps: float = 30.0
 
     @property
@@ -123,6 +127,9 @@ class Cleaned:
     kept: Timeline
     vetoed: int
     occlusion: list[float]
+    """Share of the canvas covered, per update."""
+    stillness: list[float] = field(default_factory=list)
+    """Overlap (IoU) between each update's occluder and the previous one; 0 when either is empty."""
 
 
 def toolchain() -> dict:
@@ -202,25 +209,137 @@ async def _sam_objects(
     return objects
 
 
-def sam_occluders(
+def sam_objects(
     video: Path, params: Params, info: media.VideoInfo, out: Path
-) -> tuple[dict[int, np.ndarray], list[dict], list[str]]:
-    """Per-frame painter masks (camera view), the SAM streams they came from, and what was kept as painted."""
+) -> tuple[Objects, list[dict], tuple[int, int]]:
+    """Every tracked object per frame (camera view, proxy pixels), the SAM streams, and the proxy size."""
     proxy_size = media.output_size(info, params.sam_width)
     work = _sam_work(out, params, proxy_size)
     events = {concept: work / f"{sam.slug(concept)}.events.ndjson" for concept in params.concepts}
     objects = asyncio.run(_sam_objects(video, params, proxy_size, events))
-    shape = (proxy_size[1], proxy_size[0])
-    if params.corners:
-        region = polygon_mask(np.array(params.corners, dtype=np.float64) * proxy_size, shape)
-    else:
-        region = np.ones(shape, dtype=bool)
-    keys = painted(objects, region, params.fps)
     streams = [
         {"concept": concept, "file": path.relative_to(out).as_posix(), "sha256": file_sha256(path)}
         for concept, path in events.items()
     ]
-    return occluders(objects, keys, shape), streams, sorted(keys)
+    return objects, streams, proxy_size
+
+
+def occluder_masks(
+    objects: Objects, params: Params, proxy_size: tuple[int, int]
+) -> tuple[dict[int, np.ndarray], list[str]]:
+    """Per-frame painter masks (camera view), and the keys of objects kept as painted instead.
+
+    Telling a painted hand from a resting one needs the canvas edge (real ones reach past it),
+    so without corners everything SAM found is removed. Whatever the critic had SAM track is a
+    leftover by definition, so it is never kept.
+    """
+    shape = (proxy_size[1], proxy_size[0])
+    keys: set[str] = set()
+    if params.corners:
+        region = polygon_mask(np.array(params.corners, dtype=np.float64) * proxy_size, shape)
+        keys = {key for key in painted(objects, region, params.fps) if not key.startswith(CRITIC_PREFIX)}
+    return occluders(objects, keys, shape), sorted(keys)
+
+
+def sam_occluders(
+    video: Path, params: Params, info: media.VideoInfo, out: Path, *, box_streams: list[dict] = (),
+) -> tuple[dict[int, np.ndarray], list[dict], list[str]]:
+    """Masks from a finished run's caches: the concept streams plus the critic's box streams."""
+    objects, streams, proxy_size = sam_objects(video, params, info, out)
+    for stream in box_streams:
+        result = asyncio.run(sam.parse_cached(out / stream["file"]))
+        for index, blobs in sam.frame_objects(result, prefix=f"{stream['concept']}:").items():
+            objects.setdefault(index, {}).update(blobs)
+    masks, kept = occluder_masks(objects, params, proxy_size)
+    return masks, streams + list(box_streams), kept
+
+
+async def _tracked_objects(
+    proxy: Path, proxy_size: tuple[int, int], boxes: list[tuple[int, tuple[int, int, int, int]]],
+    events_file: Path, frames: int, work: Path, prefix: str,
+) -> Objects:
+    """SAM follows each boxed thing through the whole video; cached like the concept streams."""
+    if events_file.exists():
+        result = await sam.parse_cached(events_file)
+    else:
+        api = sam.client()
+        file_id = await sam.upload_cached(api, proxy, work / "file_id.txt")
+        result = await sam.segment_boxes(api, file_id, proxy_size, boxes, events_file, frames=frames)
+    return sam.frame_objects(result, prefix=prefix)
+
+
+def critic_rounds(
+    video: Path, params: Params, geometry: Geometry, out: Path, objects: Objects,
+    proxy_size: tuple[int, int], cleaned: Cleaned, *, recorded: list[dict] | None = None,
+) -> tuple[Cleaned, list[dict], list[dict]]:
+    """Spark inspects the reconstruction and SAM fixes what it finds, up to params.critic_rounds times.
+
+    Each round: pick keyframes, show Spark (camera | reconstruction) pairs, turn its boxes into
+    SAM box prompts (objects) or holds (shadows, glare, smears), rebuild. With `recorded`, a
+    receipt's rounds, nothing is asked: the cached answers and streams are replayed, which is
+    how verify runs. Returns the final reconstruction, the box streams and the record.
+    """
+    work = _sam_work(out, params, proxy_size)
+    proxy, frames = _proxy(video, params, proxy_size, work)
+    streams: list[dict] = []
+    record: list[dict] = []
+    total = params.critic_rounds if recorded is None else len(recorded)
+    for number in range(1, total + 1):
+        if recorded is None:
+            keyframes = critic.pick_keyframes(
+                cleaned.occlusion, cleaned.stillness, cleaned.kept, params.persist_frames, params.fps
+            )
+        else:
+            keyframes = [int(index) for index in recorded[number - 1]["keyframes"]]
+        answer_file = out / "spark" / f"critic-{number}.json"
+        if not answer_file.exists():
+            if recorded is not None:
+                raise FileNotFoundError(str(answer_file))
+            answer_file.parent.mkdir(parents=True, exist_ok=True)
+            shown = critic.pairs(
+                proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
+                fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
+            )
+            answer = spark.critic_answer(spark.client(), shown)
+            answer_file.write_text(json.dumps(answer, indent=2), encoding="utf-8")
+        answer = json.loads(answer_file.read_text(encoding="utf-8"))
+        defects = [
+            defect for defect in spark.parse_critic(answer, len(keyframes), geometry.size)
+            if defect.confidence >= critic.MIN_CONFIDENCE
+        ]
+        entry = {
+            "round": number,
+            "keyframes": keyframes,
+            "file": answer_file.relative_to(out).as_posix(),
+            "sha256": file_sha256(answer_file),
+            "defects": [asdict(defect) for defect in defects],
+            "tracked": 0,
+            "held": 0,
+        }
+        boxes = critic.proxy_boxes(defects, keyframes, params.corners, geometry.size, proxy_size)
+        if boxes:
+            events_file = work / f"critic-{number}.events.ndjson"
+            found = asyncio.run(_tracked_objects(
+                proxy, proxy_size, boxes, events_file, frames, work, f"{CRITIC_PREFIX}{number}:"
+            ))
+            for index, blobs in found.items():
+                objects.setdefault(index, {}).update(blobs)
+            entry["tracked"] = len(boxes)
+            streams.append({
+                "concept": f"{CRITIC_PREFIX}{number}",
+                "file": events_file.relative_to(out).as_posix(),
+                "sha256": file_sha256(events_file),
+            })
+            masks, _ = occluder_masks(objects, params, proxy_size)
+            cleaned = clean(video, params, geometry, masks, raw_out=None)
+        held = critic.holds(cleaned.kept, defects, keyframes, geometry.size)
+        if held.any():
+            cleaned = replace(cleaned, kept=cleaned.kept.without(held))
+            entry["held"] = int(held.sum())
+        record.append(entry)
+        if not defects:
+            break
+    return cleaned, streams, record
 
 
 def clean(
@@ -256,6 +375,8 @@ def clean(
 
     plate = CleanPlate(start, CleanPlateConfig(dilate_px=params.dilate, persist_frames=params.persist_frames, record=True))
     occlusion: list[float] = []
+    stillness: list[float] = []
+    previous: np.ndarray | None = None
     with ExitStack() as stack:
         raw = stack.enter_context(media.FrameWriter(raw_out, geometry.size, params.output_fps)) if raw_out else None
         for index, frame in enumerate(stack.enter_context(closing(frames()))):
@@ -269,12 +390,17 @@ def clean(
                 occluder = everything
             plate.update(frame, occluder)
             occlusion.append(0.0 if occluder is None else float(occluder.mean()))
+            if occluder is None or previous is None or not occluder.any() or not previous.any():
+                stillness.append(0.0)
+            else:
+                stillness.append(float((occluder & previous).sum() / (occluder | previous).sum()))
+            previous = occluder
             if raw is not None:
                 raw.write(frame)
 
     timeline = plate.timeline()
     vetoed = timeline.transients(threshold=plate.config.change_threshold, window=params.revert_frames)
-    return Cleaned(start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion)
+    return Cleaned(start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion, stillness)
 
 
 def replay(
@@ -327,20 +453,29 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     """Process one session into out/: videos, stats, reels, match page, receipt.json and the ledger of Meta calls."""
     out.mkdir(parents=True, exist_ok=True)
     info = media.probe(video)
-    masks, streams, kept_as_painted, scan = None, [], [], None
+    masks, streams, kept_as_painted, scan, objects, proxy_size = None, [], [], None, None, None
     if params.masks == "sam":
         with ledger.recording(out / LEDGER):
             if params.scan:
                 params, scan = spark_scan(video, params, info, out)
                 print(f"  Spark saw: {', '.join(item['phrase'] for item in scan['seen']) or 'nothing'}; "
                       f"tracking {', '.join(params.concepts)}")
-            masks, streams, kept_as_painted = sam_occluders(video, params, info, out)
+            objects, streams, proxy_size = sam_objects(video, params, info, out)
+            masks, kept_as_painted = occluder_masks(objects, params, proxy_size)
         if kept_as_painted:
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
 
     geometry = Geometry.of(info, params)
     cleaned = clean(video, params, geometry, masks, raw_out=out / "raw.mp4")
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
+    rounds: list[dict] = []
+    if objects is not None and params.critic_rounds:
+        with ledger.recording(out / LEDGER):
+            cleaned, box_streams, rounds = critic_rounds(video, params, geometry, out, objects, proxy_size, cleaned)
+        streams += box_streams
+        for entry in rounds:
+            print(f"  critic round {entry['round']}: {len(entry['defects'])} leftover(s), "
+                  f"{entry['tracked']} sent to SAM, {entry['held']} change(s) held")
     moments = out / "moments.mp4"
     if not moments.exists():
         media.make_moments(video, moments, size=media.output_size(info, MOMENTS_WIDTH), seconds=params.seconds)
@@ -373,6 +508,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
         "params": params.to_dict(),
         "spark_scan": scan,
         "sam_streams": streams,
+        "critic": {"rounds": rounds, "min_confidence": critic.MIN_CONFIDENCE},
         "meta_calls": ledger.summary(out / LEDGER),
         "kept_as_painted": kept_as_painted,
         "timeline": {"changes": len(cleaned.timeline), "vetoed": cleaned.vetoed, "kept": len(cleaned.kept)},
@@ -421,8 +557,21 @@ def verify(receipt_path: Path, video: Path) -> Verdict:
     params = Params.from_dict(receipt["params"])
     info = media.probe(video)
     geometry = Geometry.of(info, params)
-    masks = sam_occluders(video, params, info, folder)[0] if params.masks == "sam" else None
+    masks, objects, proxy_size = None, None, None
+    if params.masks == "sam":
+        objects, _, proxy_size = sam_objects(video, params, info, folder)
+        masks, _ = occluder_masks(objects, params, proxy_size)
     cleaned = clean(video, params, geometry, masks, raw_out=None)
+    recorded = (receipt.get("critic") or {}).get("rounds") or []
+    if objects is not None and recorded:
+        try:
+            cleaned, _, _ = critic_rounds(
+                video, params, geometry, folder, objects, proxy_size, cleaned, recorded=recorded
+            )
+        except FileNotFoundError as missing:
+            checks.append(("the critic's cached answers are present", False, str(missing)))
+            return Verdict(False, checks)
+        checks.append(("the critic's cached answers are present", True, f"{len(recorded)} round(s)"))
     _, chain = replay(cleaned, params, geometry.size)
     same = chain == receipt["output"]["canvas_sha256"]
     detail = f"{len(cleaned.occlusion)} frames"

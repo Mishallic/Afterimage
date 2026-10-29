@@ -302,22 +302,24 @@ def extra_concepts(scan: Scan, existing: tuple[str, ...], limit: int = MAX_EXTRA
     return extra[:limit]
 
 
-def critic(api: OpenAI, pairs: list[tuple[np.ndarray, np.ndarray]]) -> list[Defect]:
-    """Show Spark (camera | reconstruction) pairs; get back leftovers, boxed on the reconstruction."""
+def critic_answer(api: OpenAI, pairs: list[tuple[np.ndarray, np.ndarray]]) -> dict:
+    """Show Spark (camera | reconstruction) pairs; its raw answer, for caching. parse_critic reads it."""
     content: list[dict] = [{"type": "input_text", "text": CRITIC_PROMPT}]
     for number, (raw, clean) in enumerate(pairs):
         side_by_side = np.hstack([raw, clean])
         height = round(side_by_side.shape[0] * CRITIC_WIDTH / side_by_side.shape[1] / 2) * 2
         content.append({"type": "input_text", "text": f"Image {number}:"})
         content.append(image_block(imaging.resize(side_by_side, (CRITIC_WIDTH, height))))
-    answer = ask_json(api, content, CRITIC_SCHEMA, "reconstruction_critic", effort="high")
-    defects = []
-    for item in answer["defects"]:
-        if 0 <= item["image"] < len(pairs) and len(item["box"]) >= 4:
-            clean = pairs[item["image"]][1]
-            size = (clean.shape[1], clean.shape[0])
-            defects.append(Defect(item["image"], to_pixels(item["box"], size), item["kind"], float(item["confidence"])))
-    return defects
+    return ask_json(api, content, CRITIC_SCHEMA, "reconstruction_critic", effort="high")
+
+
+def parse_critic(answer: dict, count: int, size: tuple[int, int]) -> list[Defect]:
+    """Leftovers from a critic answer about `count` pairs, boxed in pixels of a `size` reconstruction."""
+    return [
+        Defect(item["image"], to_pixels(item["box"], size), item["kind"], float(item["confidence"]))
+        for item in answer["defects"]
+        if 0 <= item["image"] < count and len(item["box"]) >= 4
+    ]
 
 
 def chapters(api: OpenAI, scan_video: Path, picks: list[int]) -> list[dict]:

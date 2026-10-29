@@ -50,7 +50,8 @@ def main() -> None:
         raise SystemExit(f"Cached SAM streams are missing ({', '.join(missing)}); re-run the session first.")
 
     info = media.probe(args.video)
-    masks = sam_occluders(args.video, params, info, folder)[0]
+    boxes = [stream for stream in receipt["sam_streams"] if stream["concept"].startswith("critic")]
+    masks = sam_occluders(args.video, params, info, folder, box_streams=boxes)[0]
 
     def frames(stretch: tuple[float, float]) -> tuple[int, int]:
         return round(stretch[0] * params.fps), round(stretch[1] * params.fps)
