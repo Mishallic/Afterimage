@@ -36,6 +36,7 @@ def parse_args() -> tuple[Path, Params, str, bool]:
     parser.add_argument("--width", type=int, default=defaults.width, help="working width")
     parser.add_argument("--sam-width", type=int, default=defaults.sam_width, help="width of the copy sent to SAM")
     parser.add_argument("--seconds", type=float, help="only process the first N seconds")
+    parser.add_argument("--start", type=float, default=0.0, help="skip the first N seconds (camera handling)")
     parser.add_argument("--corners", nargs=4, metavar="X,Y", help="canvas corners as fractions of the frame")
     parser.add_argument("--aspect", type=float, help="canvas height / width, e.g. 1.5 for 40x60 portrait")
     parser.add_argument("--dilate", type=int, default=defaults.dilate, help="pixels to grow masks by")
@@ -52,6 +53,7 @@ def parse_args() -> tuple[Path, Params, str, bool]:
         width=args.width,
         sam_width=args.sam_width,
         seconds=args.seconds,
+        start=args.start,
         corners=tuple(tuple(float(v) for v in point.split(",")) for point in args.corners) if args.corners else None,
         aspect=args.aspect,
         dilate=args.dilate,

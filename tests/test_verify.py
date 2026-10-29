@@ -46,6 +46,18 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(self.receipt["generative_steps"], [])
         self.assertEqual(len(self.receipt["output"]["canvas_sha256"]), 64)
 
+    def test_a_start_offset_skips_the_first_seconds_everywhere(self) -> None:
+        whole = list(media.read_frames(self.video, fps=2, size=SIZE))
+        later = list(media.read_frames(self.video, fps=2, size=SIZE, start=2.0))
+        self.assertEqual(len(later), len(whole) - 4)
+        difference = np.abs(later[0].astype(np.int16) - whole[4].astype(np.int16)).mean()
+        self.assertLess(difference, 3.0)
+        proxy = self.out / "from2.mp4"
+        media.make_proxy(self.video, proxy, fps=2, size=SIZE, start=2.0)
+        self.assertAlmostEqual(media.probe(proxy).duration, 18.0, delta=0.6)
+        picked = next(iter(media.read_indices(self.video, [0], fps=2, size=SIZE, start=2.0)))
+        self.assertLess(np.abs(picked.astype(np.int16) - whole[4].astype(np.int16)).mean(), 3.0)
+
     def test_the_moments_copy_runs_at_natural_speed(self) -> None:
         info = media.probe(self.out / "moments.mp4")
         self.assertAlmostEqual(info.duration, 20.0, delta=0.6)

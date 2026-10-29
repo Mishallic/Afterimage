@@ -54,6 +54,8 @@ class Params:
     width: int = 1280
     sam_width: int = 640
     seconds: float | None = None
+    start: float = 0.0
+    """Seconds skipped at the start: the camera being handled before it settled."""
     corners: tuple[tuple[float, float], ...] | None = None
     """Canvas corners as fractions of the camera frame (top-left, top-right, bottom-right, bottom-left)."""
     aspect: float | None = None
@@ -148,7 +150,11 @@ def toolchain() -> dict:
 
 
 def _sam_work(out: Path, params: Params, proxy_size: tuple[int, int]) -> Path:
-    tag = f"{params.fps:g}fps-{proxy_size[0]}px" + (f"-{params.seconds:g}s" if params.seconds else "")
+    tag = f"{params.fps:g}fps-{proxy_size[0]}px"
+    if params.start:
+        tag += f"-from{params.start:g}s"
+    if params.seconds:
+        tag += f"-{params.seconds:g}s"
     return out / "sam" / tag
 
 
@@ -156,7 +162,7 @@ def _proxy(video: Path, params: Params, proxy_size: tuple[int, int], work: Path)
     """The low-fps copy that SAM and Spark see, made once, and its number of frames."""
     proxy = work / "proxy.mp4"
     if not proxy.exists():
-        media.make_proxy(video, proxy, fps=params.fps, size=proxy_size, seconds=params.seconds)
+        media.make_proxy(video, proxy, fps=params.fps, size=proxy_size, seconds=params.seconds, start=params.start)
     info = media.probe(proxy)
     return proxy, round(info.duration * info.fps)
 
@@ -377,7 +383,9 @@ def clean(
     def frames():
         return (
             geometry.view(frame)
-            for frame in media.read_frames(video, fps=params.fps, size=geometry.frame_size, seconds=params.seconds)
+            for frame in media.read_frames(
+                video, fps=params.fps, size=geometry.frame_size, seconds=params.seconds, start=params.start
+            )
         )
 
     everything = np.ones((geometry.size[1], geometry.size[0]), dtype=bool)
@@ -500,7 +508,9 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
                   f"{entry['tracked']} sent to SAM, {entry['held']} change(s) held")
     moments = out / "moments.mp4"
     if not moments.exists():
-        media.make_moments(video, moments, size=media.output_size(info, MOMENTS_WIDTH), seconds=params.seconds)
+        media.make_moments(
+            video, moments, size=media.output_size(info, MOMENTS_WIDTH), seconds=params.seconds, start=params.start
+        )
     tracker = StatsTracker(cleaned.start, params.fps)
     final, chain = replay(cleaned, params, geometry.size, out=out, tracker=tracker)
 

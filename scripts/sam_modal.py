@@ -238,7 +238,10 @@ class Tracker:
 
 
 @app.local_entrypoint()
-def main(video: str, concepts: str = "hand,person", seconds: float = 30.0, fps: float = 1.0, width: int = 640) -> None:
+def main(
+    video: str, concepts: str = "hand,person", seconds: float = 30.0, start: float = 0.0, fps: float = 1.0,
+    width: int = 640,
+) -> None:
     """Try the tracker on a clip and write an overlay, like scripts/sam_probe.py. `concepts` is comma-separated."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import numpy as np
@@ -250,10 +253,10 @@ def main(video: str, concepts: str = "hand,person", seconds: float = 30.0, fps: 
     source = Path(video)
     info = media.probe(source)
     size = media.output_size(info, width)
-    work = ROOT / "out" / "probe-open" / f"{source.stem}-{fps:g}fps-{size[0]}px-{seconds:g}s"
+    work = ROOT / "out" / "probe-open" / f"{source.stem}-{fps:g}fps-{size[0]}px-from{start:g}s-{seconds:g}s"
     proxy = work / "proxy.mp4"
     if not proxy.exists():
-        media.make_proxy(source, proxy, fps=fps, size=size, seconds=seconds)
+        media.make_proxy(source, proxy, fps=fps, size=size, seconds=seconds, start=start)
     data = Tracker().track.remote(proxy.read_bytes(), [{"text": c} for c in concept])
     (work / "masks.npz").write_bytes(data)
     objects, meta = maskfile.unpack(data)

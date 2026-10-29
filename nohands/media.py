@@ -61,8 +61,12 @@ def output_size(info: VideoInfo, width: int) -> tuple[int, int]:
     return width, height
 
 
-def _input_args(video: Path, seconds: float | None) -> list[str]:
-    args = [find_tool("ffmpeg"), "-y", "-v", "error", "-i", str(video)]
+def _input_args(video: Path, seconds: float | None, start: float = 0.0) -> list[str]:
+    """`start` seconds are skipped (seeking before the input, so it's fast and frame-accurate)."""
+    args = [find_tool("ffmpeg"), "-y", "-v", "error"]
+    if start:
+        args += ["-ss", f"{start:.3f}"]
+    args += ["-i", str(video)]
     if seconds:
         args += ["-t", str(seconds)]
     return args
@@ -75,11 +79,12 @@ def _sampling_filter(fps: float, size: tuple[int, int]) -> str:
 
 
 def make_proxy(
-    video: Path, out: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None
+    video: Path, out: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None,
+    start: float = 0.0,
 ) -> Path:
     """Low-fps, low-res H.264 copy for SAM: it bills per frame, and occluder masks need no detail."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run(_input_args(video, seconds) + [
+    _run(_input_args(video, seconds, start) + [
         "-vf", _sampling_filter(fps, size), "-an",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
         str(out),
@@ -88,11 +93,11 @@ def make_proxy(
 
 
 def make_moments(
-    video: Path, out: Path, *, size: tuple[int, int], seconds: float | None = None
+    video: Path, out: Path, *, size: tuple[int, int], seconds: float | None = None, start: float = 0.0,
 ) -> Path:
     """Natural-speed copy with sound for the pixel receipt: the whole camera frame, cheap to seek in."""
     out.parent.mkdir(parents=True, exist_ok=True)
-    _run(_input_args(video, seconds) + [
+    _run(_input_args(video, seconds, start) + [
         "-vf", f"scale={size[0]}:{size[1]}:flags=area", "-g", "30",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
@@ -121,25 +126,28 @@ def _stream(args: list[str], size: tuple[int, int], label: str) -> Iterator[np.n
 
 
 def read_frames(
-    video: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None
+    video: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None, start: float = 0.0,
 ) -> Iterator[np.ndarray]:
     """Decode RGB frames, sampled exactly like make_proxy."""
-    args = _input_args(video, seconds) + [
+    args = _input_args(video, seconds, start) + [
         "-vf", _sampling_filter(fps, size), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
     ]
     return _stream(args, size, str(video))
 
 
 def read_indices(
-    video: Path, indices: Sequence[int], *, fps: float, size: tuple[int, int]
+    video: Path, indices: Sequence[int], *, fps: float, size: tuple[int, int], start: float = 0.0,
 ) -> Iterator[np.ndarray]:
-    """Frames at non-decreasing `indices` of a constant-frame-rate video, repeats included."""
+    """Frames at non-decreasing `indices` of a constant-frame-rate video, repeats included.
+
+    Every frame between the first and last index is decoded, so keep the indices close together.
+    """
     if not indices:
         return iter(())
     first = indices[0]
     # Seek a quarter frame early: frame `first` sits exactly on its timestamp.
     args = [
-        find_tool("ffmpeg"), "-v", "error", "-ss", f"{max(first - 0.25, 0) / fps:.6f}",
+        find_tool("ffmpeg"), "-v", "error", "-ss", f"{start + max(first - 0.25, 0) / fps:.6f}",
         "-i", str(video), "-vf", f"scale={size[0]}:{size[1]}",
         "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
     ]
