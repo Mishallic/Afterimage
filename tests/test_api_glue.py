@@ -163,16 +163,19 @@ class BasetenSparkTest(unittest.TestCase):
     def test_the_scan_video_is_sent_as_frames(self) -> None:
         api = mock.Mock()
         api.chat.completions.create.return_value = self.response("occluder_scan", json.dumps(SCAN_ANSWER))
-        frames = [np.zeros((36, 64, 3), np.uint8)] * 3
+        frames = [np.zeros((36, 64, 3), np.uint8)] * 20
         with (
-            mock.patch.object(media, "probe", return_value=media.VideoInfo(64, 36, 1.5, 2.0, False)),
+            mock.patch.object(media, "probe", return_value=media.VideoInfo(64, 36, 10.0, 2.0, False)),
             mock.patch.object(media, "read_frames", return_value=iter(frames)),
             ledger.recording(self.ledger),
         ):
             spark.scan_answer(api, Path("scan.mp4"))
         parts = api.chat.completions.create.call_args.kwargs["messages"][0]["content"]
-        self.assertEqual([part["type"] for part in parts], ["text", "image_url", "image_url", "image_url"])
-        self.assertIn("3 frames at 2 frames per second", parts[0]["text"])
+        self.assertEqual([part["type"] for part in parts], ["text"] + ["image_url"] * spark.BASETEN_MAX_IMAGES)
+        self.assertEqual(parts[1]["image_url"]["detail"], "high")
+        self.assertIn("10 seconds long", parts[0]["text"])
+        self.assertIn("image 0: 0 s", parts[0]["text"])
+        self.assertIn(f"image {spark.BASETEN_MAX_IMAGES - 1}: 9.5 s", parts[0]["text"])
 
 
 class SamPromptTest(unittest.TestCase):

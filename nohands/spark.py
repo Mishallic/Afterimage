@@ -27,6 +27,8 @@ TRACKED_ANYWAY = ("body", "hand", "brush")
 """Kinds the default SAM concepts (person, hand, paintbrush) already cover."""
 MAX_EXTRA_CONCEPTS = 3
 """Each extra concept is another SAM pass over the whole session: $0.72 per footage-hour at 1 fps."""
+BASETEN_MAX_IMAGES = 8
+"""Baseten's chat endpoint rejects requests with more images than this."""
 
 _BOX = {"type": "array", "items": {"type": "number"}}
 
@@ -322,16 +324,19 @@ def _scan_frame(second: float, picks: list[int]) -> int:
 def scan_answer(api: OpenAI, scan_video: Path) -> dict:
     """Spark's raw answer about a scan video, for caching; parse_scan turns it into a Scan.
 
-    The Meta API takes the video itself. Baseten's endpoint takes images, so Spark Open gets
-    the digest's frames one by one, with the frame rate stated so its seconds still line up.
+    The Meta API takes the video itself. Baseten's endpoint takes at most BASETEN_MAX_IMAGES
+    images, so Spark Open gets that many frames spread over the digest, each with its second
+    stated so the answer's seconds still map back to session frames.
     """
     if spark_provider() == "baseten":
         info = media.probe(scan_video)
         frames = list(media.read_frames(scan_video, fps=SCAN_FPS, size=(info.width, info.height)))
-        note = (f"\n\nThe video is given as {len(frames)} frames at {SCAN_FPS:g} frames per second: "
-                f"image k (counting from 0) is at second k/{SCAN_FPS:g}.")
+        chosen = sorted(set(np.linspace(0, len(frames) - 1, min(len(frames), BASETEN_MAX_IMAGES)).round().astype(int)))
+        seconds = ", ".join(f"image {k}: {index / SCAN_FPS:g} s" for k, index in enumerate(chosen))
+        note = (f"\n\nThe video is {len(frames) / SCAN_FPS:g} seconds long and is given as {len(chosen)} frames "
+                f"taken from it ({seconds}). Give sightings in seconds of this video.")
         content = [{"type": "input_text", "text": SCAN_PROMPT + note}]
-        content += [image_block(frame, detail="low") for frame in frames]
+        content += [image_block(frames[index], detail="high") for index in chosen]
         return ask_json(api, content, SCAN_SCHEMA, "occluder_scan")
     return ask_json(
         api,
