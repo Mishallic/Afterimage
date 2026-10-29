@@ -109,7 +109,7 @@ class OpenModeTest(unittest.TestCase):
         self.assertTrue(receipt["sam_streams"][-1]["file"].endswith("critic-1.npz"))
         self.assertEqual(receipt["critic"]["rounds"][0]["tracked"], len(receipt["critic"]["rounds"][0]["keyframes"]))
         self.assertLess(self.error(final, self.ring), 20)
-        self.assertEqual(receipt["models"]["spark"], "meta-models/muse-spark-open via Baseten")
+        self.assertEqual(receipt["models"]["spark"], f"{spark.SPARK_OPEN_MODEL} via Baseten")
         self.assertIn("Built with Muse Spark Open.", (out / "index.html").read_text(encoding="utf-8"))
         self.assertTrue(pipeline.verify(out / "receipt.json", self.video).ok)
         asked.assert_called_once()

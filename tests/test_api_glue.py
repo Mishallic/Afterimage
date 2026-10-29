@@ -137,7 +137,7 @@ class BasetenSparkTest(unittest.TestCase):
             answer = spark.ask_json(api, content, spark.SCAN_SCHEMA, "occluder_scan")
         self.assertEqual(answer, SCAN_ANSWER)
         kwargs = api.chat.completions.create.call_args.kwargs
-        self.assertEqual(kwargs["model"], "meta-models/muse-spark-open")
+        self.assertEqual(kwargs["model"], spark.SPARK_OPEN_MODEL)
         self.assertEqual(kwargs["tools"][0]["function"]["parameters"], spark.SCAN_SCHEMA)
         self.assertEqual(kwargs["tool_choice"], {"type": "function", "function": {"name": "occluder_scan"}})
         parts = kwargs["messages"][0]["content"]
@@ -146,10 +146,10 @@ class BasetenSparkTest(unittest.TestCase):
         self.assertEqual(parts[1]["image_url"]["detail"], "low")
         self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
         entry = ledger.entries(self.ledger)[0]
-        self.assertEqual((entry["endpoint"], entry["model"]), ("chat.completions", "meta-models/muse-spark-open"))
+        self.assertEqual((entry["endpoint"], entry["model"]), ("chat.completions", spark.SPARK_OPEN_MODEL))
         self.assertNotIn("base64", json.dumps(entry))
         self.assertNotIn("bt-secret-123", self.ledger.read_text(encoding="utf-8"))
-        self.assertEqual(spark.model_name(), "meta-models/muse-spark-open via Baseten")
+        self.assertEqual(spark.model_name(), f"{spark.SPARK_OPEN_MODEL} via Baseten")
 
     def test_json_in_the_text_is_accepted_when_the_tool_call_is_skipped(self) -> None:
         api = mock.Mock()

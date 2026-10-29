@@ -15,7 +15,8 @@ META_BASE_URL = "https://api.meta.ai/v1"
 SAM_MODEL = "sam-3.1"
 SPARK_MODEL = "muse-spark-1.3"
 BASETEN_BASE_URL = "https://inference.baseten.co/v1"
-SPARK_OPEN_MODEL = "meta-models/muse-spark-open"
+SPARK_OPEN_MODEL = os.environ.get("BASETEN_MODEL", "").strip() or "meta-models/muse-spark-open-1026"
+"""The hackathon's Baseten keys unlock the -1026 deployment only; BASETEN_MODEL overrides it."""
 SPARK_PROVIDERS = ("meta", "baseten")
 
 
