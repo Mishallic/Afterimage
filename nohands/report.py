@@ -92,7 +92,7 @@ TEMPLATE = """<!doctype html>
   </section>
 
   <section class="panel"><h2>Share</h2><button id="download">Download card</button></section>
-  <footer>Built with Meta's SAM 3.1 and Muse models. No generative fill.</footer>
+  <footer>__FOOTER__</footer>
 </main>
 <script>
 const stats = __STATS__;
@@ -188,13 +188,23 @@ def _data_uri(path: Path) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(path.read_bytes()).decode()
 
 
+def footer(models: dict | None) -> str:
+    """Which models did the work. Muse Spark Open's licence asks for its line verbatim."""
+    used = [value for value in ((models or {}).get("masks"), (models or {}).get("spark")) if value]
+    text = f"Built with {' and '.join(used)}. " if used else ""
+    if any("muse-spark-open" in value for value in used):
+        text += "Built with Muse Spark Open. "
+    return text + "No generative fill."
+
+
 def write_report(
     out_dir: Path, stats: dict, title: str, final_image: Path, time_map: Path, receipt: dict, proof: dict,
-    underneath: list[dict] = (),
+    underneath: list[dict] = (), models: dict | None = None,
 ) -> Path:
     """`receipt` is the tap-to-replay lookup grid; `proof` is receipt.json; `underneath` lists the peeled stills."""
     page = (
         TEMPLATE.replace("__TITLE__", html.escape(title))
+        .replace("__FOOTER__", html.escape(footer(models)))
         .replace("__STATS__", json.dumps(stats))
         .replace("__RECEIPT__", json.dumps(receipt))
         .replace("__PROOF__", json.dumps(proof))

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import critic, ledger, media, sam, spark
+from . import critic, ledger, maskfile, media, sam, sam_open, spark
 from .autocut import auto_edl
 from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
 from .config import find_tool
@@ -64,7 +64,13 @@ class Params:
     """Seconds within which an undone change counts as transient (shadow, glare, resting hand)."""
     concepts: tuple[str, ...] = ("person", "hand", "paintbrush")
     masks: str = "sam"
-    """sam (the product), motion (offline development stand-in) or none."""
+    """sam (SAM 3.1 through the Meta Model API), open (SAM 3.1's open weights on a Modal GPU),
+    motion (offline development stand-in) or none."""
+
+    @property
+    def tracked(self) -> bool:
+        """Masks come from SAM, one way or the other, so Spark's scan and critic apply."""
+        return self.masks in ("sam", "open")
     scan: bool = True
     """With SAM masks: Spark watches the session first, adds what else to track and finds the canvas."""
     critic_rounds: int = 2
@@ -215,6 +221,13 @@ def sam_objects(
     """Every tracked object per frame (camera view, proxy pixels), the SAM streams, and the proxy size."""
     proxy_size = media.output_size(info, params.sam_width)
     work = _sam_work(out, params, proxy_size)
+    if params.masks == "open":
+        proxy, frames = _proxy(video, params, proxy_size, work)
+        file = work / "concepts.npz"
+        objects = sam_open.track_concepts(proxy, list(params.concepts), file, frames=frames)
+        stream = {"concept": ", ".join(params.concepts), "file": file.relative_to(out).as_posix(),
+                  "sha256": file_sha256(file)}
+        return objects, [stream], proxy_size
     events = {concept: work / f"{sam.slug(concept)}.events.ndjson" for concept in params.concepts}
     objects = asyncio.run(_sam_objects(video, params, proxy_size, events))
     streams = [
@@ -247,24 +260,33 @@ def sam_occluders(
     """Masks from a finished run's caches: the concept streams plus the critic's box streams."""
     objects, streams, proxy_size = sam_objects(video, params, info, out)
     for stream in box_streams:
-        result = asyncio.run(sam.parse_cached(out / stream["file"]))
-        for index, blobs in sam.frame_objects(result, prefix=f"{stream['concept']}:").items():
+        path = out / stream["file"]
+        prefix = f"{stream['concept']}:"
+        if path.suffix == ".npz":
+            found = {index: {prefix + key: blob for key, blob in blobs.items()}
+                     for index, blobs in maskfile.load(path)[0].items()}
+        else:
+            found = sam.frame_objects(asyncio.run(sam.parse_cached(path)), prefix=prefix)
+        for index, blobs in found.items():
             objects.setdefault(index, {}).update(blobs)
     masks, kept = occluder_masks(objects, params, proxy_size)
     return masks, streams + list(box_streams), kept
 
 
 async def _tracked_objects(
-    proxy: Path, proxy_size: tuple[int, int], boxes: list[tuple[int, tuple[int, int, int, int]]],
-    events_file: Path, frames: int, work: Path, prefix: str,
+    mode: str, proxy: Path, proxy_size: tuple[int, int], boxes: list[tuple[int, tuple[int, int, int, int]]],
+    file: Path, frames: int, work: Path, prefix: str,
 ) -> Objects:
     """SAM follows each boxed thing through the whole video; cached like the concept streams."""
-    if events_file.exists():
-        result = await sam.parse_cached(events_file)
+    if mode == "open":
+        found = sam_open.track_boxes(proxy, boxes, file, frames=frames)
+        return {index: {prefix + key: blob for key, blob in blobs.items()} for index, blobs in found.items()}
+    if file.exists():
+        result = await sam.parse_cached(file)
     else:
         api = sam.client()
         file_id = await sam.upload_cached(api, proxy, work / "file_id.txt")
-        result = await sam.segment_boxes(api, file_id, proxy_size, boxes, events_file, frames=frames)
+        result = await sam.segment_boxes(api, file_id, proxy_size, boxes, file, frames=frames)
     return sam.frame_objects(result, prefix=prefix)
 
 
@@ -318,9 +340,9 @@ def critic_rounds(
         }
         boxes = critic.proxy_boxes(defects, keyframes, params.corners, geometry.size, proxy_size)
         if boxes:
-            events_file = work / f"critic-{number}.events.ndjson"
+            events_file = work / (f"critic-{number}.npz" if params.masks == "open" else f"critic-{number}.events.ndjson")
             found = asyncio.run(_tracked_objects(
-                proxy, proxy_size, boxes, events_file, frames, work, f"{CRITIC_PREFIX}{number}:"
+                params.masks, proxy, proxy_size, boxes, events_file, frames, work, f"{CRITIC_PREFIX}{number}:"
             ))
             for index, blobs in found.items():
                 objects.setdefault(index, {}).update(blobs)
@@ -454,7 +476,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     out.mkdir(parents=True, exist_ok=True)
     info = media.probe(video)
     masks, streams, kept_as_painted, scan, objects, proxy_size = None, [], [], None, None, None
-    if params.masks == "sam":
+    if params.tracked:
         with ledger.recording(out / LEDGER):
             if params.scan:
                 params, scan = spark_scan(video, params, info, out)
@@ -496,9 +518,14 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
                 (out / "reel.edl.json").write_text(edl.to_json(), encoding="utf-8")
             render(edl, sources, out / name)
 
+    models = {
+        "masks": {"sam": f"{sam.SAM_MODEL} (Meta Model API)", "open": sam_open.MODEL}.get(params.masks, params.masks),
+        "spark": spark.model_name() if params.tracked and (params.scan or params.critic_rounds) else None,
+    }
     receipt = {
         "version": RECEIPT_VERSION,
         "tool": "nohands",
+        "models": models,
         "source": {
             "file": video.name,
             "sha256": file_sha256(video),
@@ -528,7 +555,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     timemap = media.write_image(time_map(painted_at, stats["frames"]), out / "timemap.jpg")
     lookup = pixel_receipt(painted_at, sample_fps=params.fps, corners=params.corners)
     stills = underneath(cleaned, final, out, params.output_fps)
-    write_report(out, stats, title or video.stem, final_image, timemap, lookup, receipt, stills)
+    write_report(out, stats, title or video.stem, final_image, timemap, lookup, receipt, stills, models)
     return receipt
 
 
@@ -558,7 +585,7 @@ def verify(receipt_path: Path, video: Path) -> Verdict:
     info = media.probe(video)
     geometry = Geometry.of(info, params)
     masks, objects, proxy_size = None, None, None
-    if params.masks == "sam":
+    if params.tracked:
         objects, _, proxy_size = sam_objects(video, params, info, folder)
         masks, _ = occluder_masks(objects, params, proxy_size)
     cleaned = clean(video, params, geometry, masks, raw_out=None)

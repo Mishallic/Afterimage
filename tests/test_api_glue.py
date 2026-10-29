@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
+
+import numpy as np
 
 from nohands import ledger, media, pipeline, sam, spark, voice
 
@@ -105,6 +110,69 @@ class SparkScanTest(unittest.TestCase):
         params, found = self.scan(mine, mock.Mock(return_value=SCAN_ANSWER))
         self.assertEqual(params.corners, mine.corners)
         self.assertIsNone(found["canvas_corners"])
+
+
+class BasetenSparkTest(unittest.TestCase):
+    """Spark Open through Baseten: chat completions, a forced tool call, frames instead of video."""
+
+    def setUp(self) -> None:
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.dict(os.environ, {"SPARK_PROVIDER": "baseten", "BASETEN_API_KEY": "bt-secret-123"}).start()
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.folder)
+        self.ledger = self.folder / "ledger.jsonl"
+
+    @staticmethod
+    def response(name: str, arguments: str | None = None, content: str | None = None) -> SimpleNamespace:
+        calls = [SimpleNamespace(function=SimpleNamespace(name=name, arguments=arguments))] if arguments else None
+        message = SimpleNamespace(content=content, tool_calls=calls)
+        return SimpleNamespace(id="chat_1", usage=None, choices=[SimpleNamespace(message=message)])
+
+    def test_the_schema_goes_in_as_a_forced_tool_and_images_as_chat_parts(self) -> None:
+        api = mock.Mock()
+        api.chat.completions.create.return_value = self.response("occluder_scan", json.dumps(SCAN_ANSWER))
+        frame = np.zeros((36, 64, 3), np.uint8)
+        content = [{"type": "input_text", "text": "look"}, spark.image_block(frame, detail="low")]
+        with ledger.recording(self.ledger):
+            answer = spark.ask_json(api, content, spark.SCAN_SCHEMA, "occluder_scan")
+        self.assertEqual(answer, SCAN_ANSWER)
+        kwargs = api.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["model"], "meta-models/muse-spark-open")
+        self.assertEqual(kwargs["tools"][0]["function"]["parameters"], spark.SCAN_SCHEMA)
+        self.assertEqual(kwargs["tool_choice"], {"type": "function", "function": {"name": "occluder_scan"}})
+        parts = kwargs["messages"][0]["content"]
+        self.assertEqual(parts[0], {"type": "text", "text": "look"})
+        self.assertEqual(parts[1]["type"], "image_url")
+        self.assertEqual(parts[1]["image_url"]["detail"], "low")
+        self.assertTrue(parts[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        entry = ledger.entries(self.ledger)[0]
+        self.assertEqual((entry["endpoint"], entry["model"]), ("chat.completions", "meta-models/muse-spark-open"))
+        self.assertNotIn("base64", json.dumps(entry))
+        self.assertNotIn("bt-secret-123", self.ledger.read_text(encoding="utf-8"))
+        self.assertEqual(spark.model_name(), "meta-models/muse-spark-open via Baseten")
+
+    def test_json_in_the_text_is_accepted_when_the_tool_call_is_skipped(self) -> None:
+        api = mock.Mock()
+        api.chat.completions.create.return_value = self.response(
+            "reconstruction_critic", content="```json\n" + json.dumps({"defects": []}) + "\n```"
+        )
+        with ledger.recording(self.ledger):
+            answer = spark.ask_json(api, [{"type": "input_text", "text": "x"}], spark.CRITIC_SCHEMA, "reconstruction_critic")
+        self.assertEqual(answer, {"defects": []})
+
+    def test_the_scan_video_is_sent_as_frames(self) -> None:
+        api = mock.Mock()
+        api.chat.completions.create.return_value = self.response("occluder_scan", json.dumps(SCAN_ANSWER))
+        frames = [np.zeros((36, 64, 3), np.uint8)] * 3
+        with (
+            mock.patch.object(media, "probe", return_value=media.VideoInfo(64, 36, 1.5, 2.0, False)),
+            mock.patch.object(media, "read_frames", return_value=iter(frames)),
+            ledger.recording(self.ledger),
+        ):
+            spark.scan_answer(api, Path("scan.mp4"))
+        parts = api.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        self.assertEqual([part["type"] for part in parts], ["text", "image_url", "image_url", "image_url"])
+        self.assertIn("3 frames at 2 frames per second", parts[0]["text"])
 
 
 class SamPromptTest(unittest.TestCase):

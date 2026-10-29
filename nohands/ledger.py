@@ -46,8 +46,11 @@ def recording(path: Path) -> Iterator[Path]:
 
 
 def _scrub(text: str) -> str:
-    key = os.environ.get("MODEL_API_KEY", "").strip()
-    return text.replace(key, "[key]") if key else text
+    for name in ("MODEL_API_KEY", "BASETEN_API_KEY"):
+        key = os.environ.get(name, "").strip()
+        if key:
+            text = text.replace(key, "[key]")
+    return text
 
 
 @contextmanager

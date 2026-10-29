@@ -65,7 +65,7 @@ class CriticLoopTest(unittest.TestCase):
                 path.write_text("cached", encoding="utf-8")
             return {index: {"hand:1": Blob.of(mask)} for index, mask in enumerate(self.eroded)}
 
-        async def tracked(proxy, proxy_size, boxes, events_file, frames, work, prefix):
+        async def tracked(mode, proxy, proxy_size, boxes, events_file, frames, work, prefix):
             events_file.write_text("tracked", encoding="utf-8")
             return {index: {f"{prefix}1": Blob.of(self.full[index])} for index in range(REST[0], REST[1])}
 

@@ -26,7 +26,8 @@ def parse_args() -> tuple[Path, Params, str, bool]:
     defaults = Params()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("video", type=Path)
-    parser.add_argument("--masks", choices=["sam", "motion", "none"], default=defaults.masks)
+    parser.add_argument("--masks", choices=["sam", "open", "motion", "none"], default=defaults.masks,
+                        help="sam: the Meta Model API; open: SAM 3.1 weights on Modal (see scripts/sam_modal.py)")
     parser.add_argument("--concept", action="append", dest="concepts",
                         help="SAM noun phrase, repeatable (default: person, hand, paintbrush)")
     parser.add_argument("--no-scan", action="store_true",

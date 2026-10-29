@@ -15,7 +15,7 @@ import numpy as np
 from openai import OpenAI
 
 from . import imaging, ledger, media
-from .config import META_BASE_URL, SPARK_MODEL, meta_api_key
+from .config import SPARK_MODEL, SPARK_OPEN_MODEL, spark_provider, spark_settings
 
 GRID = 1000
 """Spark's grounding coordinates run 0..1000 across whatever image or video it was sent."""
@@ -169,7 +169,13 @@ class Defect:
 
 
 def client() -> OpenAI:
-    return OpenAI(base_url=META_BASE_URL, api_key=meta_api_key())
+    base_url, _, key = spark_settings()
+    return OpenAI(base_url=base_url, api_key=key)
+
+
+def model_name() -> str:
+    """For the receipt and the page: which Spark did the thinking. Needs no key."""
+    return f"{SPARK_OPEN_MODEL} via Baseten" if spark_provider() == "baseten" else SPARK_MODEL
 
 
 def upload(api: OpenAI, path: Path, *, expires_days: int = 7) -> str:
@@ -186,9 +192,40 @@ def upload(api: OpenAI, path: Path, *, expires_days: int = 7) -> str:
     return uploaded.id
 
 
-def image_block(frame: np.ndarray) -> dict:
+def image_block(frame: np.ndarray, *, detail: str | None = None) -> dict:
     data = base64.b64encode(media.encode_jpeg(frame)).decode()
-    return {"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}"}
+    block = {"type": "input_image", "image_url": f"data:image/jpeg;base64,{data}"}
+    if detail:
+        block["detail"] = detail
+    return block
+
+
+def _chat_parts(content: list[dict]) -> list[dict]:
+    """The same content in chat-completions form, which is what Baseten's endpoint speaks."""
+    parts = []
+    for block in content:
+        if block["type"] == "input_text":
+            parts.append({"type": "text", "text": block["text"]})
+        elif block["type"] == "input_image":
+            image = {"url": block["image_url"]}
+            if block.get("detail"):
+                image["detail"] = block["detail"]
+            parts.append({"type": "image_url", "image_url": image})
+        else:
+            raise ValueError(f"Spark Open via Baseten takes text and images, not {block['type']}")
+    return parts
+
+
+def _tool_answer(response, name: str) -> dict:
+    """The structured answer: from the forced tool call, or from JSON in the text if the model skipped it."""
+    message = response.choices[0].message
+    for call in getattr(message, "tool_calls", None) or []:
+        if call.function.name == name:
+            return json.loads(call.function.arguments)
+    text = (message.content or "").strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1].rsplit("```", 1)[0]
+    return json.loads(text)
 
 
 def _described(content: list[dict]) -> dict:
@@ -205,12 +242,34 @@ def ask_json(
     api: OpenAI, content: list[dict], schema: dict, name: str, *, effort: str = "medium",
     max_output_tokens: int = 8000,
 ) -> dict:
+    """One structured answer from Spark. `content` is in Responses form; Baseten gets it as chat."""
+    model = SPARK_OPEN_MODEL if spark_provider() == "baseten" else SPARK_MODEL
+    if spark_provider() == "baseten":
+        # Spark Open's hosted endpoint has no structured output, so the schema goes in as a tool
+        # the model is made to call, and the answer is the call's arguments.
+        tool = {"type": "function", "function": {"name": name, "description": "Report the answer.", "parameters": schema}}
+        with ledger.call(
+            "chat.completions", name, model=model, max_output_tokens=max_output_tokens, **_described(content),
+        ) as logged:
+            response = api.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": _chat_parts(content)}],
+                tools=[tool],
+                tool_choice={"type": "function", "function": {"name": name}},
+                max_tokens=max_output_tokens,
+            )
+            logged["id"] = getattr(response, "id", None)
+            usage = getattr(response, "usage", None)
+            logged["usage"] = usage.model_dump() if hasattr(usage, "model_dump") else usage
+            answer = _tool_answer(response, name)
+            logged["answer"] = answer
+        return answer
     with ledger.call(
-        "responses.create", name, model=SPARK_MODEL,
+        "responses.create", name, model=model,
         effort=effort, max_output_tokens=max_output_tokens, **_described(content),
     ) as logged:
         response = api.responses.create(
-            model=SPARK_MODEL,
+            model=model,
             input=[{"type": "message", "role": "user", "content": content}],
             reasoning={"effort": effort},
             max_output_tokens=max_output_tokens,
@@ -261,7 +320,19 @@ def _scan_frame(second: float, picks: list[int]) -> int:
 
 
 def scan_answer(api: OpenAI, scan_video: Path) -> dict:
-    """Spark's raw answer about a scan video, for caching; parse_scan turns it into a Scan."""
+    """Spark's raw answer about a scan video, for caching; parse_scan turns it into a Scan.
+
+    The Meta API takes the video itself. Baseten's endpoint takes images, so Spark Open gets
+    the digest's frames one by one, with the frame rate stated so its seconds still line up.
+    """
+    if spark_provider() == "baseten":
+        info = media.probe(scan_video)
+        frames = list(media.read_frames(scan_video, fps=SCAN_FPS, size=(info.width, info.height)))
+        note = (f"\n\nThe video is given as {len(frames)} frames at {SCAN_FPS:g} frames per second: "
+                f"image k (counting from 0) is at second k/{SCAN_FPS:g}.")
+        content = [{"type": "input_text", "text": SCAN_PROMPT + note}]
+        content += [image_block(frame, detail="low") for frame in frames]
+        return ask_json(api, content, SCAN_SCHEMA, "occluder_scan")
     return ask_json(
         api,
         [{"type": "input_text", "text": SCAN_PROMPT}, {"type": "input_video", "file_id": upload(api, scan_video)}],
