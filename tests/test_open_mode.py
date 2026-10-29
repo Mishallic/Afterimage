@@ -115,5 +115,49 @@ class OpenModeTest(unittest.TestCase):
         asked.assert_called_once()
 
 
+class ResumeTest(unittest.TestCase):
+    """A tracking call survives a dropped connection: its id is kept on disk and waited on again."""
+
+    def fake_modal(self, data: bytes, failures: int = 0) -> tuple[mock.Mock, mock.Mock]:
+        class ConnectionError(Exception):
+            pass
+
+        call = mock.Mock(object_id="fc-123")
+        call.get.side_effect = [ConnectionError("dns")] * failures + [data]
+        tracker = mock.Mock()
+        tracker.track.spawn.return_value = call
+        modal = mock.Mock()
+        modal.Cls.from_name.return_value.return_value = tracker
+        modal.FunctionCall.from_id.return_value = call
+        modal.exception.ConnectionError = ConnectionError
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(sam_open, "_modal", return_value=modal).start()
+        mock.patch.object(sam_open.time, "sleep").start()
+        return modal, call
+
+    def test_first_run_spawns_and_forgets_the_call_once_done(self) -> None:
+        modal, call = self.fake_modal(b"masks")
+        with tempfile.TemporaryDirectory() as folder:
+            proxy = Path(folder) / "proxy.mp4"
+            proxy.write_bytes(b"video")
+            call_file = Path(folder) / "concepts.call"
+            self.assertEqual(sam_open._result(proxy, [{"text": "hand"}], call_file), b"masks")
+            modal.Cls.from_name.return_value.return_value.track.spawn.assert_called_once_with(b"video", [{"text": "hand"}])
+            self.assertFalse(call_file.exists())
+
+    def test_a_dropped_connection_is_retried_and_a_saved_call_is_resumed(self) -> None:
+        modal, call = self.fake_modal(b"masks", failures=2)
+        with tempfile.TemporaryDirectory() as folder:
+            proxy = Path(folder) / "proxy.mp4"
+            proxy.write_bytes(b"video")
+            call_file = Path(folder) / "concepts.call"
+            call_file.write_text("fc-123", encoding="utf-8")
+            self.assertEqual(sam_open._result(proxy, [{"text": "hand"}], call_file), b"masks")
+            modal.FunctionCall.from_id.assert_called_once_with("fc-123")
+            modal.Cls.from_name.assert_not_called()
+            self.assertEqual(call.get.call_count, 3)
+            self.assertFalse(call_file.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

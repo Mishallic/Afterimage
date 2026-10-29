@@ -19,14 +19,40 @@ FUNCTION = "track"
 MODEL = "facebook/sam3.1 (open weights, Modal)"
 GPU_USD_PER_HOUR = 1.10
 """Rough A10 rate, for the cost column of the ledger; Modal bills per second."""
+RETRIES = 6
 
 
-def _remote():
+def _modal():
     try:
         import modal
     except ImportError as error:
         raise RuntimeError("Open-weight masks need the Modal client: pip install modal, then modal setup.") from error
-    return getattr(modal.Cls.from_name(APP, CLASS)(), FUNCTION)
+    return modal
+
+
+def _result(proxy: Path, prompts: list[dict], call_file: Path) -> bytes:
+    """Start the remote call, or pick up one started earlier, and wait for its result.
+
+    The call id is kept next to the cache, so a dropped connection (this machine's DNS does
+    that) never loses a tracking run: re-running the pipeline resumes waiting for it.
+    """
+    modal = _modal()
+    if call_file.exists():
+        call = modal.FunctionCall.from_id(call_file.read_text(encoding="utf-8").strip())
+    else:
+        call = getattr(modal.Cls.from_name(APP, CLASS)(), FUNCTION).spawn(proxy.read_bytes(), prompts)
+        call_file.parent.mkdir(parents=True, exist_ok=True)
+        call_file.write_text(call.object_id, encoding="utf-8")
+    for attempt in range(1, RETRIES + 1):
+        try:
+            data = call.get()
+            break
+        except modal.exception.ConnectionError:
+            if attempt == RETRIES:
+                raise
+            time.sleep(10 * attempt)
+    call_file.unlink(missing_ok=True)
+    return data
 
 
 def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames: int | None) -> Objects:
@@ -37,7 +63,7 @@ def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames:
         file=proxy.name, sha256=ledger.file_sha256(proxy), frames=frames, prompts=prompts,
     ) as logged:
         started = time.monotonic()
-        data = _remote().remote(proxy.read_bytes(), prompts)
+        data = _result(proxy, prompts, out.with_suffix(".call"))
         seconds = time.monotonic() - started
         logged["seconds"] = round(seconds, 1)
         logged["est_cost_usd"] = round(seconds / 3600 * GPU_USD_PER_HOUR, 4)

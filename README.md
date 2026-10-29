@@ -125,7 +125,7 @@ account and a Baseten key):
 modal setup
 modal secret create huggingface HF_TOKEN=hf_...
 modal deploy scripts/sam_modal.py
-modal run scripts/sam_modal.py --video data/session.mp4 --concept hand --seconds 30   # overlay check
+modal run scripts/sam_modal.py --video data/session.mp4 --concepts hand,person --seconds 30   # overlay check
 python scripts/nohands_run.py data/session.mp4 --masks open --corners ...              # SPARK_PROVIDER=baseten in .env
 ```
 

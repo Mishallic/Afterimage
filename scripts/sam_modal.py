@@ -8,7 +8,7 @@ One-time setup (needs a Hugging Face account with access to facebook/sam3.1 gran
 
 Then `--masks open` in scripts/nohands_run.py uses it. To try it on a clip by hand:
 
-    modal run scripts/sam_modal.py --video data/session.mp4 --concept hand --concept person --seconds 30
+    modal run scripts/sam_modal.py --video data/session.mp4 --concepts hand,person --seconds 30
 
 which writes out/probe-open/<video>/masks.npz and overlay.mp4 (every mask tinted red).
 
@@ -29,7 +29,9 @@ APP = "nohands-sam"
 VERSION = "sam3.1"
 CHUNK_FRAMES = 1800
 """Frames per tracking session: a 30-minute stretch at 1 fps fits a 24 GB card with the video on the CPU."""
-GPUS = ["L4", "A10", "A100-40GB"]
+GPUS = ["A100-40GB", "A100-80GB", "H100"]
+"""A 22 GB card runs out of memory in the multiplex detector (it ran to 19 GB on an L4); 40 GB is the floor.
+The multiplex width is baked into the checkpoint (16), so it can't be narrowed to save memory."""
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -39,8 +41,12 @@ image = (
         "git clone --depth 1 https://github.com/facebookresearch/sam3 /opt/sam3",
         "pip install -e /opt/sam3",
     )
-    .pip_install("huggingface_hub", "numpy", "pillow")
-    .env({"HF_HUB_ENABLE_HF_TRANSFER": "0"})
+    # The predictor's import chain reaches into sam3's notebook and training extras.
+    .pip_install(
+        "huggingface_hub", "numpy<2", "pillow", "einops", "pycocotools", "opencv-python-headless",
+        "scipy", "scikit-image", "hydra-core", "torchmetrics", "fvcore", "psutil",
+    )
+    .env({"HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
 )
 app = modal.App(APP)
 weights = modal.Volume.from_name("nohands-hf-cache", create_if_missing=True)
@@ -114,28 +120,42 @@ class Tracker:
 
         # FlashAttention 3 is Hopper-only; the cards above are Ada and Ampere.
         self.predictor = build_sam3_predictor(version=VERSION, use_fa3=False)
+        model = getattr(self.predictor, "model", None)
+        if model is not None and hasattr(model, "init_state"):
+            # The shared predictor passes offload_state_to_cpu on every start_session; SAM 3.1's
+            # multiplex model has no such option and refuses the call. Drop it on the way through.
+            original = model.init_state
+
+            def init_state(*args, **kwargs):
+                kwargs.pop("offload_state_to_cpu", None)
+                return original(*args, **kwargs)
+
+            model.init_state = init_state
 
     def _chunks(self, video: Path, frames: int) -> list[tuple[int, Path]]:
-        """(first frame, chunk file) for stretches of at most CHUNK_FRAMES frames."""
+        """(first frame, folder of JPEG frames) for stretches of at most CHUNK_FRAMES frames.
+
+        The predictor reads a JPEG folder or an MP4; folders need no video decoder in the
+        container, and every frame is numbered so chunk boundaries are exact.
+        """
         import subprocess
 
-        if frames <= CHUNK_FRAMES:
-            return [(0, video)]
         chunks = []
-        for start in range(0, frames, CHUNK_FRAMES):
-            part = video.with_name(f"chunk-{start}.mp4")
+        for start in range(0, max(frames, 1), CHUNK_FRAMES):
+            folder = video.with_name(f"frames-{start}")
+            folder.mkdir()
             subprocess.run([
                 "ffmpeg", "-y", "-v", "error", "-i", str(video),
-                "-vf", f"select=gte(n\\,{start})*lt(n\\,{start + CHUNK_FRAMES}),setpts=N/FRAME_RATE/TB",
-                "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", str(part),
+                "-vf", f"select=gte(n\\,{start})*lt(n\\,{start + CHUNK_FRAMES})", "-vsync", "vfr",
+                "-q:v", "2", str(folder / "%05d.jpg"),
             ], check=True)
-            chunks.append((start, part))
+            chunks.append((start, folder))
         return chunks
 
     def _session(self, path: Path, prompts: list[dict], first: int, frame_masks: dict, label: str) -> None:
         predictor = self.predictor
         session = predictor.handle_request(request=dict(
-            type="start_session", resource_path=str(path), offload_video_to_cpu=True, offload_state_to_cpu=True,
+            type="start_session", resource_path=str(path), offload_video_to_cpu=True,
         ))["session_id"]
         try:
             for number, prompt in enumerate(prompts, start=1):
@@ -145,14 +165,17 @@ class Tracker:
                 else:
                     left, top, right, bottom = prompt["box"]
                     # The box is given in proxy pixels; SAM takes relative [x, y, w, h].
-                    width, height = self._size(path)
+                    width, height = self._size(next(path.glob("*.jpg")))
                     request = dict(
                         type="add_prompt", session_id=session, frame_index=prompt["frame"] - first,
                         bounding_boxes=[[left / width, top / height, (right - left) / width, (bottom - top) / height]],
                         bounding_box_labels=[1], rel_coordinates=True, obj_id=number,
                     )
                     key, direction = f"box:{number}", "both"
-                predictor.handle_request(request=request)
+                prompted = predictor.handle_request(request=request)["outputs"]
+                print(f"[{key}] prompt frame: ids={_numpy(prompted['out_obj_ids']).tolist()} "
+                      f"probs={[round(float(p), 3) for p in _numpy(prompted.get('out_probs', []))]}")
+                yielded, found = 0, 0
                 for response in predictor.handle_stream_request(request=dict(
                     type="propagate_in_video", session_id=session, propagation_direction=direction,
                 )):
@@ -160,24 +183,22 @@ class Tracker:
                     ids = _numpy(outputs["out_obj_ids"])
                     masks = _numpy(outputs["out_binary_masks"])
                     frame = first + int(response["frame_index"])
+                    yielded += 1
                     for object_id, mask in zip(ids, masks):
                         if mask.any():
+                            found += 1
                             frame_masks.setdefault(frame, {})[f"{key}:{int(object_id)}"] = mask.astype(bool)
+                print(f"[{key}] propagated {yielded} frames, {found} object-frames")
                 predictor.handle_request(request=dict(type="reset_session", session_id=session))
         finally:
             predictor.handle_request(request=dict(type="close_session", session_id=session))
 
     @staticmethod
-    def _size(path: Path) -> tuple[int, int]:
-        import json
-        import subprocess
+    def _size(image: Path) -> tuple[int, int]:
+        from PIL import Image
 
-        data = json.loads(subprocess.run(
-            ["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", str(path)],
-            capture_output=True, text=True, check=True,
-        ).stdout)
-        stream = next(s for s in data["streams"] if s["codec_type"] == "video")
-        return int(stream["width"]), int(stream["height"])
+        with Image.open(image) as opened:
+            return opened.size
 
     @staticmethod
     def _frames(path: Path) -> int:
@@ -217,14 +238,15 @@ class Tracker:
 
 
 @app.local_entrypoint()
-def main(video: str, concept: list[str], seconds: float = 30.0, fps: float = 1.0, width: int = 640) -> None:
-    """Try the deployed tracker on a clip and write an overlay, like scripts/sam_probe.py."""
+def main(video: str, concepts: str = "hand,person", seconds: float = 30.0, fps: float = 1.0, width: int = 640) -> None:
+    """Try the tracker on a clip and write an overlay, like scripts/sam_probe.py. `concepts` is comma-separated."""
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import numpy as np
 
     from nohands import maskfile, media
     from nohands.config import ROOT
 
+    concept = [c.strip() for c in concepts.split(",") if c.strip()]
     source = Path(video)
     info = media.probe(source)
     size = media.output_size(info, width)
