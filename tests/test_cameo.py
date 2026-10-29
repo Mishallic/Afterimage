@@ -60,9 +60,23 @@ class ReceiptTest(unittest.TestCase):
         self.assertEqual(colours.shape, (60, 90, 3))
         self.assertTrue((colours[0, 0] == (46, 46, 52)).all())
         self.assertGreater(int(colours[40, 60, 0]), int(colours[15, 20, 0]))
-        lookup = receipt(painted_at, sample_fps=1.0, video_fps=30.0, width=45)
+        lookup = receipt(painted_at, sample_fps=1.0, width=45)
         self.assertEqual(len(lookup["grid"]), lookup["width"] * lookup["height"])
         self.assertIn(95, lookup["grid"])
+        self.assertEqual(lookup["to_camera"], np.eye(3).ravel().tolist())
+
+    def test_tapped_spot_maps_back_into_the_camera_frame(self) -> None:
+        corners = ((0.2, 0.1), (0.8, 0.15), (0.75, 0.9), (0.2, 0.85))
+        matrix = np.array(receipt(np.zeros((4, 4), np.int32), sample_fps=1.0, corners=corners)["to_camera"]).reshape(3, 3)
+
+        def mapped(u: float, v: float) -> tuple[float, float]:
+            x, y, w = matrix @ (u, v, 1.0)
+            return round(x / w, 6), round(y / w, 6)
+
+        self.assertEqual(mapped(0, 0), (0.2, 0.1))
+        self.assertEqual(mapped(1, 1), (0.75, 0.9))
+        centre = mapped(0.5, 0.5)
+        self.assertTrue(0.4 < centre[0] < 0.6 and 0.4 < centre[1] < 0.6)
 
 
 if __name__ == "__main__":

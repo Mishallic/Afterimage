@@ -33,6 +33,7 @@ TEMPLATE = """<!doctype html>
   .hint { margin: 0 0 12px; color: var(--muted); }
   .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
   .proof { position: relative; cursor: crosshair; }
+  .moment { position: relative; }
   .proof img { width: 100%; display: block; border-radius: 8px; }
   .dot { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 3px solid var(--gold); border-radius: 50%; pointer-events: none; display: none; }
   video { width: 100%; display: block; border-radius: 8px; background: #000; }
@@ -52,14 +53,22 @@ TEMPLATE = """<!doctype html>
 
   <section class="panel">
     <h2>Pixel receipt</h2>
-    <p class="hint">Tap anywhere on the painting to replay the real footage of the last time that spot changed.</p>
+    <p class="hint">Tap anywhere on the painting to play the camera's footage of the last time that spot changed, at natural speed, sound on.</p>
     <div class="two">
       <div>
         <div class="proof" id="proof"><img id="painting" src="__FINAL__" alt="The finished painting"><i class="dot" id="dot"></i></div>
         <label><input type="checkbox" id="showmap"> Colour by when it was painted</label>
       </div>
-      <div><video id="moment" src="raw.mp4" muted playsinline></video><p class="hint" id="when"></p></div>
+      <div><div class="moment"><video id="moment" src="moments.mp4" playsinline></video><i class="dot" id="camdot"></i></div><p class="hint" id="when"></p></div>
     </div>
+  </section>
+
+  <section class="panel">
+    <h2>Underneath</h2>
+    <p class="hint">Drag to peel the painting back one layer of changes at a time, down to the bare canvas. Every layer is what the camera saw there before.</p>
+    <img id="under" src="__FINAL__" alt="The painting, peeled back" style="width: 100%; display: block; border-radius: 8px">
+    <input id="peel" type="range" min="0" max="1" value="0">
+    <p class="hint" id="underlabel"></p>
   </section>
 
   <section class="panel">
@@ -106,7 +115,7 @@ const tiles = [
 document.getElementById("tiles").innerHTML = tiles.map(([k, v]) => `<div class="tile"><b>${v}</b><span>${k}</span></div>`).join("");
 
 const painting = document.getElementById("painting"), dot = document.getElementById("dot");
-const moment = document.getElementById("moment"), when = document.getElementById("when");
+const moment = document.getElementById("moment"), when = document.getElementById("when"), camdot = document.getElementById("camdot");
 let stopAt = null;
 document.getElementById("showmap").onchange = e => { painting.src = e.target.checked ? images.map : images.final; };
 document.getElementById("proof").onclick = e => {
@@ -116,14 +125,30 @@ document.getElementById("proof").onclick = e => {
   const gx = Math.min(receipt.width - 1, Math.floor(fx * receipt.width));
   const gy = Math.min(receipt.height - 1, Math.floor(fy * receipt.height));
   const frame = receipt.grid[gy * receipt.width + gx];
-  if (frame < 0) { when.textContent = "Bare canvas: never painted here."; moment.pause(); return; }
-  when.textContent = `Last changed ${clock(frame / receipt.sample_fps)} into the session.`;
-  // The paint lands while the hand is still there; it's committed a little later, once uncovered.
-  moment.currentTime = Math.max(frame - 12, 0) / receipt.video_fps;
-  stopAt = (frame + 3) / receipt.video_fps;
+  if (frame < 0) { when.textContent = "Bare canvas: never painted here."; moment.pause(); camdot.style.display = "none"; return; }
+  // The change was first seen at `seconds`; the paint landed while the hand was still there, so start earlier.
+  const seconds = frame / receipt.sample_fps, start = Math.max(seconds - receipt.lead_s, 0);
+  const [a, b, c, d, e2, f, g, h, i] = receipt.to_camera, w = g * fx + h * fy + i;
+  camdot.style.left = `${(a * fx + b * fy + c) / w * 100}%`; camdot.style.top = `${(d * fx + e2 * fy + f) / w * 100}%`;
+  camdot.style.display = "block";
+  when.textContent = `Last changed ${clock(seconds)} into the session. Playing the camera from ${clock(start)}.`;
+  moment.currentTime = start;
+  stopAt = seconds + receipt.tail_s;
+  moment.muted = false;
   moment.play();
 };
 moment.ontimeupdate = () => { if (stopAt !== null && moment.currentTime >= stopAt) { moment.pause(); stopAt = null; } };
+
+const under = __UNDER__;
+const underImg = document.getElementById("under"), peel = document.getElementById("peel"), underLabel = document.getElementById("underlabel");
+peel.max = under.length;
+const setPeel = () => {
+  const n = Number(peel.value);
+  underImg.src = n === 0 ? images.final : under[n - 1].file;
+  underLabel.textContent = n === 0 ? "The finished painting." : n === under.length ? "Bare canvas: every change undone."
+    : `${under[n - 1].k} layer${under[n - 1].k === 1 ? "" : "s"} of changes peeled away.`;
+};
+peel.oninput = setPeel; setPeel();
 
 const clean = document.getElementById("clean"), raw = document.getElementById("raw"), ghost = document.getElementById("ghost");
 const setGhost = () => { raw.style.opacity = ghost.value / 100; };
@@ -164,14 +189,16 @@ def _data_uri(path: Path) -> str:
 
 
 def write_report(
-    out_dir: Path, stats: dict, title: str, final_image: Path, time_map: Path, receipt: dict, proof: dict
+    out_dir: Path, stats: dict, title: str, final_image: Path, time_map: Path, receipt: dict, proof: dict,
+    underneath: list[dict] = (),
 ) -> Path:
-    """`receipt` is the tap-to-replay lookup grid; `proof` is receipt.json."""
+    """`receipt` is the tap-to-replay lookup grid; `proof` is receipt.json; `underneath` lists the peeled stills."""
     page = (
         TEMPLATE.replace("__TITLE__", html.escape(title))
         .replace("__STATS__", json.dumps(stats))
         .replace("__RECEIPT__", json.dumps(receipt))
         .replace("__PROOF__", json.dumps(proof))
+        .replace("__UNDER__", json.dumps(list(underneath)))
         .replace("__FINAL__", _data_uri(final_image))
         .replace("__MAP__", _data_uri(time_map))
     )

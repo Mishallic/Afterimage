@@ -88,6 +88,38 @@ class TimelineTest(unittest.TestCase):
         self.assertEqual(first_blue(replayed), 3)
         self.assertEqual(plate.painted_at[15, 15], 3)
 
+    def test_peel_shows_what_was_underneath(self) -> None:
+        # Pixel 0 went bare -> A -> B -> C; pixel 3 went bare -> D; pixels 1 and 2 never changed.
+        bare, a, b, c, d = (228, 228, 228), (10, 10, 10), (20, 20, 20), (30, 30, 30), (40, 40, 40)
+        timeline = Timeline(
+            (2, 2),
+            np.array([0, 3, 0, 0], np.int32),
+            np.array([1, 2, 5, 9], np.int32),
+            np.array([bare, bare, a, b], np.uint8),
+            np.array([a, d, b, c], np.uint8),
+        )
+        initial = np.full((2, 2, 3), bare, np.uint8)
+        final = np.array([[c, bare], [bare, d]], np.uint8)
+        np.testing.assert_array_equal(timeline.depth(), [[3, 0], [0, 1]])
+        layers = [canvas.copy() for canvas in timeline.peel(initial, final, 4)]
+        np.testing.assert_array_equal(layers[0], [[b, bare], [bare, bare]])
+        np.testing.assert_array_equal(layers[1], [[a, bare], [bare, bare]])
+        np.testing.assert_array_equal(layers[2], initial)
+        np.testing.assert_array_equal(layers[3], initial)
+
+    def test_peel_follows_the_kept_changes_when_one_was_dropped(self) -> None:
+        bare, a, b, c = (228, 228, 228), (10, 10, 10), (20, 20, 20), (30, 30, 30)
+        timeline = Timeline(
+            (1, 1), np.zeros(3, np.int32), np.array([1, 5, 9], np.int32),
+            np.array([bare, a, b], np.uint8), np.array([a, b, c], np.uint8),
+        )
+        kept = timeline.without(np.array([False, True, False]))
+        initial, final = np.full((1, 1, 3), bare, np.uint8), np.full((1, 1, 3), c, np.uint8)
+        layers = [canvas.copy() for canvas in kept.peel(initial, final, 2)]
+        # The dropped change (to B) never shows: peeling C reveals A, not B.
+        np.testing.assert_array_equal(layers[0][0, 0], a)
+        np.testing.assert_array_equal(layers[1][0, 0], bare)
+
     def test_painted_at(self) -> None:
         timeline = Timeline(
             (2, 2), np.array([0, 3, 0], np.int32), np.array([1, 2, 5], np.int32),

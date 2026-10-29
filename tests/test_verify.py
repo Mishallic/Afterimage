@@ -46,6 +46,18 @@ class VerifyTest(unittest.TestCase):
         self.assertEqual(self.receipt["generative_steps"], [])
         self.assertEqual(len(self.receipt["output"]["canvas_sha256"]), 64)
 
+    def test_the_moments_copy_runs_at_natural_speed(self) -> None:
+        info = media.probe(self.out / "moments.mp4")
+        self.assertAlmostEqual(info.duration, 20.0, delta=0.6)
+        self.assertEqual((info.width, info.height), SIZE)
+
+    def test_the_painting_is_peeled_down_to_the_bare_canvas(self) -> None:
+        page = (self.out / "index.html").read_text(encoding="utf-8")
+        stills = sorted(self.out.glob("underneath-*.jpg"))
+        self.assertTrue(stills)
+        self.assertTrue((self.out / "underneath.mp4").exists())
+        self.assertIn(stills[0].name, page)
+
     def test_real_footage_verifies(self) -> None:
         verdict = verify(self.out / "receipt.json", self.video)
         self.assertTrue(verdict.ok, verdict.checks)

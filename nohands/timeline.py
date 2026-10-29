@@ -82,6 +82,34 @@ class Timeline:
         np.maximum.at(result, self.pixel, self.frame)
         return result.reshape(self.shape)
 
+    def depth(self) -> np.ndarray:
+        """How many changes each pixel went through."""
+        counts = np.zeros(self.shape[0] * self.shape[1], dtype=np.int32)
+        np.add.at(counts, self.pixel, 1)
+        return counts.reshape(self.shape)
+
+    def peel(self, initial: np.ndarray, final: np.ndarray, layers: int) -> Iterator[np.ndarray]:
+        """The painting with its last k changes undone, for k = 1..layers: what's underneath.
+
+        Each step takes every pixel back to the colour it had after the change before, so one
+        layer of changes comes off everywhere at once; a pixel with k changes or fewer is down
+        to the bare canvas. Conservators find this under old paintings with X-rays and call it
+        pentimento; here it's a by-product of the record. The array yielded is reused.
+        """
+        order = np.lexsort((self.frame, self.pixel))
+        pixel, after = self.pixel[order], self.after[order]
+        starts = np.flatnonzero(np.r_[True, pixel[1:] != pixel[:-1]])
+        counts = np.repeat(np.diff(np.r_[starts, len(pixel)]), np.diff(np.r_[starts, len(pixel)]))
+        from_end = counts - 1 - (np.arange(len(pixel)) - np.repeat(starts, np.diff(np.r_[starts, len(pixel)])))
+        canvas = final.copy()
+        flat, bare = canvas.reshape(-1, 3), initial.reshape(-1, 3)
+        for k in range(1, layers + 1):
+            shown = from_end == k
+            flat[pixel[shown]] = after[shown]
+            gone = (counts == k) & (from_end == 0)
+            flat[pixel[gone]] = bare[pixel[gone]]
+            yield canvas
+
     def replay(self, initial: np.ndarray, frames: int) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """(canvas, pixels that changed this update) for each update. The canvas array is reused."""
         canvas = initial.copy()

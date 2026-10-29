@@ -38,6 +38,11 @@ from .timeline import Timeline
 RECEIPT_VERSION = 1
 START_SCAN_FRAMES = 120
 LEDGER = "ledger.jsonl"
+MOMENTS_WIDTH = 960
+"""Width of the natural-speed copy the pixel receipt plays from."""
+MAX_LAYERS = 48
+DIVE_SECONDS = 4.0
+UNDER_STILLS = 8
 
 
 @dataclass(frozen=True)
@@ -294,6 +299,30 @@ def replay(
     return canvas.copy(), chain.hexdigest()
 
 
+def underneath(cleaned: Cleaned, final: np.ndarray, out: Path, fps: float) -> list[dict]:
+    """Peel the painting back to the bare canvas: underneath.mp4, plus a few stills for the page.
+
+    The dive stops once fewer than 0.1% of the pixels have anything left to peel (or at
+    MAX_LAYERS), so one spot reworked fifty times doesn't stretch it out.
+    """
+    depth = cleaned.kept.depth()
+    counts = np.bincount(depth.ravel())
+    deeper = depth.size - np.cumsum(counts)
+    layers = min(MAX_LAYERS, max(1, int(np.flatnonzero(deeper < depth.size * 0.001)[0])))
+    stills = set(np.linspace(1, layers, min(UNDER_STILLS, layers)).round().astype(int).tolist())
+    hold = max(1, round(DIVE_SECONDS * fps / layers))
+    files = []
+    with media.FrameWriter(out / "underneath.mp4", (final.shape[1], final.shape[0]), fps) as writer:
+        for _ in range(round(fps / 2)):
+            writer.write(final)
+        for k, canvas in enumerate(cleaned.kept.peel(cleaned.start, final, layers), start=1):
+            for _ in range(hold if k < layers else round(fps)):
+                writer.write(canvas)
+            if k in stills:
+                files.append({"k": k, "file": media.write_image(canvas, out / f"underneath-{k}.jpg").name})
+    return files
+
+
 def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool = True) -> dict:
     """Process one session into out/: videos, stats, reels, match page, receipt.json and the ledger of Meta calls."""
     out.mkdir(parents=True, exist_ok=True)
@@ -312,6 +341,9 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     geometry = Geometry.of(info, params)
     cleaned = clean(video, params, geometry, masks, raw_out=out / "raw.mp4")
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
+    moments = out / "moments.mp4"
+    if not moments.exists():
+        media.make_moments(video, moments, size=media.output_size(info, MOMENTS_WIDTH), seconds=params.seconds)
     tracker = StatsTracker(cleaned.start, params.fps)
     final, chain = replay(cleaned, params, geometry.size, out=out, tracker=tracker)
 
@@ -358,8 +390,9 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     painted_at = cleaned.kept.painted_at()
     final_image = media.write_image(final, out / "final.jpg")
     timemap = media.write_image(time_map(painted_at, stats["frames"]), out / "timemap.jpg")
-    lookup = pixel_receipt(painted_at, sample_fps=params.fps, video_fps=params.output_fps)
-    write_report(out, stats, title or video.stem, final_image, timemap, lookup, receipt)
+    lookup = pixel_receipt(painted_at, sample_fps=params.fps, corners=params.corners)
+    stills = underneath(cleaned, final, out, params.output_fps)
+    write_report(out, stats, title or video.stem, final_image, timemap, lookup, receipt, stills)
     return receipt
 
 

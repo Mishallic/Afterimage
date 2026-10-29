@@ -1,12 +1,17 @@
-"""Proof of Hand: when each part of the painting was painted, as a lookup grid and a map."""
+"""The pixel receipt: when each part of the painting was last painted, as a lookup grid and a map."""
 
 from __future__ import annotations
 
 import numpy as np
 
+from .geometry import homography, order_corners
+
 STOPS = np.array([[24, 32, 92], [116, 44, 140], [222, 82, 92], [250, 204, 84]], dtype=np.float32)
 """Early strokes are deep blue, the latest are gold."""
 UNPAINTED = (46, 46, 52)
+LEAD_SECONDS = 6.0
+"""The paint lands while the hand is still there, so the replay starts this long before the change was seen."""
+TAIL_SECONDS = 2.0
 
 
 def time_map(painted_at: np.ndarray, frames: int) -> np.ndarray:
@@ -19,7 +24,22 @@ def time_map(painted_at: np.ndarray, frames: int) -> np.ndarray:
     return colours.astype(np.uint8)
 
 
-def receipt(painted_at: np.ndarray, *, sample_fps: float, video_fps: float, width: int = 160) -> dict:
+def to_camera(corners: tuple[tuple[float, float], ...] | None) -> list[float]:
+    """Row-major 3x3 homography from canvas fractions to camera-frame fractions.
+
+    The page shows the whole camera frame when a spot is tapped (the hand is the point),
+    so the tapped spot has to be put back where it sits in that frame.
+    """
+    if corners is None:
+        return np.eye(3).ravel().tolist()
+    unit = np.array([[0, 0], [1, 0], [1, 1], [0, 1]], dtype=np.float64)
+    return homography(unit, order_corners(np.asarray(corners, dtype=np.float64))).ravel().tolist()
+
+
+def receipt(
+    painted_at: np.ndarray, *, sample_fps: float, corners: tuple[tuple[float, float], ...] | None = None,
+    width: int = 160,
+) -> dict:
     """A small grid of "painted at" frame numbers for the match page's tap-to-see-the-moment."""
     height = max(1, round(painted_at.shape[0] * width / painted_at.shape[1]))
     rows = ((np.arange(height) + 0.5) * painted_at.shape[0] / height).astype(int)
@@ -29,6 +49,8 @@ def receipt(painted_at: np.ndarray, *, sample_fps: float, video_fps: float, widt
         "width": width,
         "height": height,
         "sample_fps": sample_fps,
-        "video_fps": video_fps,
+        "lead_s": LEAD_SECONDS,
+        "tail_s": TAIL_SECONDS,
+        "to_camera": to_camera(corners),
         "grid": grid.ravel().tolist(),
     }

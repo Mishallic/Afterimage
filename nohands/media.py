@@ -87,6 +87,20 @@ def make_proxy(
     return out
 
 
+def make_moments(
+    video: Path, out: Path, *, size: tuple[int, int], seconds: float | None = None
+) -> Path:
+    """Natural-speed copy with sound for the pixel receipt: the whole camera frame, cheap to seek in."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _run(_input_args(video, seconds) + [
+        "-vf", f"scale={size[0]}:{size[1]}:flags=area", "-g", "30",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "27", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart",
+        str(out),
+    ])
+    return out
+
+
 def _stream(args: list[str], size: tuple[int, int], label: str) -> Iterator[np.ndarray]:
     width, height = size
     frame_bytes = width * height * 3
