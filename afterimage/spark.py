@@ -346,22 +346,65 @@ def scan_answer(api: OpenAI, scan_video: Path) -> dict:
     )
 
 
+POINT_KEYS = (("x", "y"),)
+BOX_KEYS = (("x_min", "y_min", "x_max", "y_max"), ("left", "top", "right", "bottom"), ("x0", "y0", "x1", "y1"))
+
+
+def _numbers(value, count: int, key_sets: tuple[tuple[str, ...], ...]) -> list[float] | None:
+    """`count` numbers out of a model's point or box, whatever shape it chose.
+
+    The schema asks for lists of numbers, and the API's strict mode delivers them. Through a
+    forced tool call the open-weight model answers [x, y], {"x": .., "y": ..}, [x, y, x, y] or
+    {"x_min": ..} as the mood takes it, so every shape is read and the first `count` numbers
+    are taken. None when there aren't that many.
+    """
+    if isinstance(value, dict):
+        picked: list = []
+        for keys in key_sets:
+            picked = [value[key] for key in keys if key in value]
+            if len(picked) == count:
+                break
+        value = picked if len(picked) == count else list(value.values())
+    if not isinstance(value, (list, tuple)):
+        return None
+    numbers = []
+    for item in value:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, (int, float)):
+            numbers.append(float(item))
+        elif isinstance(item, str):
+            try:
+                numbers.append(float(item))
+            except ValueError:
+                continue
+    return numbers[:count] if len(numbers) >= count else None
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_scan(answer: dict, picks: list[int], size: tuple[int, int]) -> Scan:
     """A scan answer in session frames (`picks` made the scan video) and pixels of `size`."""
-    occluders = [
-        Occluder(
-            phrase=" ".join(item["phrase"].lower().split()),
-            kind=item["kind"],
-            sightings=[
-                Sighting(_scan_frame(sighting["second"], picks), to_pixels(sighting["box"], size))
-                for sighting in item["sightings"][:3]
-                if len(sighting["box"]) >= 4
-            ],
-        )
-        for item in answer["occluders"]
-        if item["phrase"].strip()
-    ]
-    corners = [point[:2] for point in answer["canvas_corners"] if len(point) >= 2]
+    occluders = []
+    for item in answer.get("occluders") or []:
+        phrase = " ".join(str(item.get("phrase", "")).lower().split())
+        if not phrase:
+            continue
+        sightings = []
+        for sighting in (item.get("sightings") or [])[:3]:
+            box = _numbers(sighting.get("box"), 4, BOX_KEYS)
+            second = _number(sighting.get("second"))
+            if box is None or second is None:
+                continue
+            sightings.append(Sighting(_scan_frame(second, picks), to_pixels(box, size)))
+        occluders.append(Occluder(phrase=phrase, kind=str(item.get("kind", "other")), sightings=sightings))
+    corners = [point for point in (_numbers(value, 2, POINT_KEYS) for value in answer.get("canvas_corners") or [])
+               if point is not None]
     canvas = np.clip(np.array(corners, dtype=np.float64) / GRID, 0, 1) if len(corners) == 4 else None
     return Scan(occluders, canvas)
 
@@ -391,11 +434,14 @@ def critic_answer(api: OpenAI, pairs: list[tuple[np.ndarray, np.ndarray]]) -> di
 
 def parse_critic(answer: dict, count: int, size: tuple[int, int]) -> list[Defect]:
     """Leftovers from a critic answer about `count` pairs, boxed in pixels of a `size` reconstruction."""
-    return [
-        Defect(item["image"], to_pixels(item["box"], size), item["kind"], float(item["confidence"]))
-        for item in answer["defects"]
-        if 0 <= item["image"] < count and len(item["box"]) >= 4
-    ]
+    defects = []
+    for item in answer.get("defects") or []:
+        box = _numbers(item.get("box"), 4, BOX_KEYS)
+        image, confidence = _number(item.get("image")), _number(item.get("confidence"))
+        if box is None or image is None or confidence is None or not 0 <= int(image) < count:
+            continue
+        defects.append(Defect(int(image), to_pixels(box, size), str(item.get("kind", "other")), confidence))
+    return defects
 
 
 def chapters(api: OpenAI, scan_video: Path, picks: list[int]) -> list[dict]:

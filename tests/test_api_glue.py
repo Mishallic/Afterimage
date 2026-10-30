@@ -72,6 +72,25 @@ class SparkTest(unittest.TestCase):
         self.assertEqual(cat.sightings, [spark.Sighting(spark.scan_picks(960)[80], (0, 0, 64, 36))])
         self.assertAlmostEqual(scan.canvas_corners[0][0], 0.88)
 
+    def test_points_and_boxes_are_read_in_whatever_shape_the_model_chose(self) -> None:
+        # Spark Open on session 1 answered the corners as {"x", "y"} objects, and once as four numbers each.
+        answer = {
+            "occluders": [{"phrase": "cup", "kind": "tool", "sightings": [
+                {"second": "3", "box": {"x_min": 100, "y_min": 100, "x_max": 400, "y_max": 900}},
+                {"second": 4, "box": [1, 2]},
+            ]}],
+            "canvas_corners": [{"x": 880, "y": 70}, {"x": 120, "y": 80}, {"x": 100, "y": 960}, {"x": 900, "y": 950}],
+        }
+        scan = spark.parse_scan(answer, spark.scan_picks(960), (640, 360))
+        self.assertEqual([s.box for s in scan.occluders[0].sightings], [spark.to_pixels([100, 100, 400, 900], (640, 360))])
+        self.assertAlmostEqual(scan.canvas_corners[0][0], 0.88)
+        defects = spark.parse_critic(
+            {"defects": [{"image": "1", "box": {"left": 0, "top": 0, "right": 500, "bottom": 500}, "kind": "glare", "confidence": "0.9"},
+                         {"image": 7, "box": [0, 0, 10, 10], "kind": "glare", "confidence": 0.9}]},
+            2, (640, 360),
+        )
+        self.assertEqual([(d.keyframe, d.box, d.confidence) for d in defects], [(1, (0, 0, 320, 180), 0.9)])
+
     def test_only_things_beyond_painter_hands_and_brushes_get_a_sam_pass(self) -> None:
         scan = spark.parse_scan(SCAN_ANSWER, spark.scan_picks(960), (640, 360))
         self.assertEqual(spark.extra_concepts(scan, ("person", "hand", "paintbrush")), ["paint rag", "cat", "palette"])
