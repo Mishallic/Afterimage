@@ -13,7 +13,8 @@ Then `--masks open` in scripts/afterimage_run.py uses it. To try it on a clip by
 which writes out/probe-open/<video>/masks.npz and overlay.mp4 (every mask tinted red).
 
 The container loads the model once and keeps it warm for a couple of minutes; a text prompt
-tracks every instance of the concept, a box prompt tracks one thing from one frame both ways.
+tracks every instance of the concept; a box prompt goes to the SAM 2-style tracker inside SAM 3 and
+tracks the one thing inside the box from that frame both ways.
 Long videos are tracked in chunks, so object ids restart per chunk: keys are concept:c<chunk>:<id>.
 """
 
@@ -32,6 +33,11 @@ CHUNK_FRAMES = 1800
 GPUS = ["A100-40GB", "A100-80GB", "H100"]
 """A 22 GB card runs out of memory in the multiplex detector (it ran to 19 GB on an L4); 40 GB is the floor.
 The multiplex width is baked into the checkpoint (16), so it can't be narrowed to save memory."""
+BOX_TRACKER = "sam3"
+"""Which SAM 2-style tracker takes the box prompts: "sam3", the SAM 3 release's tracker built on the side
+(its weights are downloaded on first use), or "sam3.1", the one inside the loaded predictor, which has
+no standalone video loader (its init_state takes cached features from the demo model)."""
+BOX_MODEL = f"facebook/{BOX_TRACKER} tracker"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -56,11 +62,14 @@ videos = modal.Volume.from_name("afterimage-videos", create_if_missing=True)
 
 def _numpy(value):
     if hasattr(value, "detach"):
-        value = value.detach().cpu().numpy()
+        value = value.detach()
+        if value.is_floating_point() and value.element_size() < 4:
+            value = value.float()  # bfloat16 (autocast output) has no numpy counterpart
+        value = value.cpu().numpy()
     return value
 
 
-def _blobs(frame_masks: dict) -> bytes:
+def _blobs(frame_masks: dict, extra: dict | None = None) -> bytes:
     """Packed like afterimage.maskfile, written out here so the container doesn't need the repo."""
     import json
 
@@ -85,7 +94,7 @@ def _blobs(frame_masks: dict) -> bytes:
     np.savez_compressed(
         buffer,
         version=np.int32(1),
-        meta=np.array(json.dumps({"model": f"facebook/{VERSION}", "gpu": _gpu_name()}, sort_keys=True)),
+        meta=np.array(json.dumps({"model": f"facebook/{VERSION}", "gpu": _gpu_name(), **(extra or {})}, sort_keys=True)),
         frame=np.array([r[0] for r in rows], dtype=np.int32),
         key=np.array([r[1] for r in rows], dtype=str),
         left=np.array([r[2] for r in rows], dtype=np.int32),
@@ -155,31 +164,22 @@ class Tracker:
         return chunks
 
     def _session(self, path: Path, prompts: list[dict], first: int, frame_masks: dict, label: str) -> None:
+        """Text prompts through the concept predictor: every instance, tracked forward through the chunk."""
         predictor = self.predictor
         session = predictor.handle_request(request=dict(
             type="start_session", resource_path=str(path), offload_video_to_cpu=True,
         ))["session_id"]
         try:
-            for number, prompt in enumerate(prompts, start=1):
-                if "text" in prompt:
-                    request = dict(type="add_prompt", session_id=session, frame_index=0, text=prompt["text"])
-                    key, direction = f"{prompt['text']}:{label}", "forward"
-                else:
-                    left, top, right, bottom = prompt["box"]
-                    # The box is given in proxy pixels; SAM takes relative [x, y, w, h].
-                    width, height = self._size(next(path.glob("*.jpg")))
-                    request = dict(
-                        type="add_prompt", session_id=session, frame_index=prompt["frame"] - first,
-                        bounding_boxes=[[left / width, top / height, (right - left) / width, (bottom - top) / height]],
-                        bounding_box_labels=[1], rel_coordinates=True, obj_id=number,
-                    )
-                    key, direction = f"box:{number}", "both"
-                prompted = predictor.handle_request(request=request)["outputs"]
+            for prompt in prompts:
+                key = f"{prompt['text']}:{label}"
+                prompted = predictor.handle_request(request=dict(
+                    type="add_prompt", session_id=session, frame_index=0, text=prompt["text"],
+                ))["outputs"]
                 print(f"[{key}] prompt frame: ids={_numpy(prompted['out_obj_ids']).tolist()} "
                       f"probs={[round(float(p), 3) for p in _numpy(prompted.get('out_probs', []))]}")
                 yielded, found = 0, 0
                 for response in predictor.handle_stream_request(request=dict(
-                    type="propagate_in_video", session_id=session, propagation_direction=direction,
+                    type="propagate_in_video", session_id=session, propagation_direction="forward",
                 )):
                     outputs = response["outputs"]
                     ids = _numpy(outputs["out_obj_ids"])
@@ -194,6 +194,65 @@ class Tracker:
                 predictor.handle_request(request=dict(type="reset_session", session_id=session))
         finally:
             predictor.handle_request(request=dict(type="close_session", session_id=session))
+
+    def _boxed(self, path: Path, prompts: list[dict], first: int, frame_masks: dict) -> None:
+        """Box prompts through SAM 3's SAM 2-style tracker: one object per box, from its frame both ways.
+
+        The concept predictor's own box prompt is a visual exemplar ("more things like this": a
+        detector pass over every frame), and a click added through it stays unconfirmed when no
+        detection backs it, so boxes go to the tracker directly, the way the repo's
+        sam3_for_sam2_video_task example does.
+        """
+        import torch
+
+        tracker = self._tracker()
+        width, height = self._size(next(path.glob("*.jpg")))
+        state = tracker.init_state(video_path=str(path), offload_video_to_cpu=True)
+        for number, prompt in enumerate(prompts, start=1):
+            left, top, right, bottom = prompt["box"]
+            at, key = prompt["frame"] - first, f"box:{number}"
+            tracker.clear_all_points_in_video(state)
+            box = torch.tensor([[left / width, top / height, right / width, bottom / height]], dtype=torch.float32)
+            _, ids, _, masks = tracker.add_new_points_or_box(inference_state=state, frame_idx=at, obj_id=number, box=box)
+            print(f"[{key}] prompt frame {at}: ids={list(ids)} px={[int((m > 0).sum()) for m in _numpy(masks)]}")
+            yielded, found, scores = 0, 0, []
+            for reverse in (False, True):
+                for frame_idx, obj_ids, _, video_masks, obj_scores in tracker.propagate_in_video(
+                    state, start_frame_idx=at, max_frame_num_to_track=None, reverse=reverse, propagate_preflight=True,
+                ):
+                    yielded += 1
+                    flat_scores = _numpy(obj_scores).reshape(-1) if obj_scores is not None else []
+                    for index, (object_id, mask) in enumerate(zip(obj_ids, _numpy(video_masks) > 0)):
+                        mask = mask.reshape(mask.shape[-2:])
+                        if index < len(flat_scores):
+                            scores.append((float(flat_scores[index]), bool(mask.any())))
+                        if mask.any():
+                            found += 1
+                            frame_masks.setdefault(first + int(frame_idx), {})[f"{key}:{int(object_id)}"] = mask
+            present = sorted(score for score, has_mask in scores if has_mask)
+            empty = sorted(score for score, has_mask in scores if not has_mask)
+            summary = lambda values: f"{values[0]:.2f}..{values[-1]:.2f} (n={len(values)})" if values else "none"  # noqa: E731
+            print(f"[{key}] propagated {yielded} frames, {found} object-frames; "
+                  f"scores with a mask {summary(present)}, without {summary(empty)}")
+
+    def _tracker(self):
+        """The SAM 2-style tracker, with an image backbone attached (it shares the detector's)."""
+        tracker = getattr(self, "_box_tracker", None)
+        if tracker is None:
+            if BOX_TRACKER == "sam3.1":
+                model = self.predictor.model
+                # SAM 3.1 wraps its tracker in a proxy; the methods live on the model inside.
+                tracker = getattr(model.tracker, "model", model.tracker)
+                if getattr(tracker, "backbone", None) is None:
+                    tracker.backbone = model.detector.backbone
+            else:
+                from sam3.model_builder import build_sam3_video_model
+
+                sam3 = build_sam3_video_model()
+                tracker = sam3.tracker
+                tracker.backbone = sam3.detector.backbone
+            self._box_tracker = tracker
+        return tracker
 
     @staticmethod
     def _size(image: Path) -> tuple[int, int]:
@@ -245,8 +304,8 @@ class Tracker:
                 self._session(chunk, texts, start, frame_masks, f"c{start // CHUNK_FRAMES}")
             mine = [p for p in boxes if start <= p["frame"] < start + CHUNK_FRAMES]
             if mine:
-                self._session(chunk, mine, start, frame_masks, f"c{start // CHUNK_FRAMES}")
-        return _blobs(frame_masks)
+                self._boxed(chunk, mine, start, frame_masks)
+        return _blobs(frame_masks, {"box_tracker": BOX_MODEL} if boxes else None)
 
 
 @app.local_entrypoint()

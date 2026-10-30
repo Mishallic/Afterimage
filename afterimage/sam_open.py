@@ -88,6 +88,8 @@ def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames:
         objects, meta = maskfile.unpack(data)
         logged["objects"] = sum(len(blobs) for blobs in objects.values())
         logged["gpu"] = meta.get("gpu")
+        if meta.get("box_tracker"):
+            logged["box_tracker"] = meta["box_tracker"]
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
     return objects

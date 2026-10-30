@@ -400,6 +400,7 @@ def critic_rounds(
             "held": 0,
         }
         boxes = critic.proxy_boxes(defects, keyframes, params.corners, geometry.size, proxy_size)
+        found: dict = {}
         if boxes:
             events_file = work / (f"critic-{number}.npz" if params.masks == "open" else f"critic-{number}.events.ndjson")
             found = asyncio.run(_tracked_objects(
@@ -408,22 +409,28 @@ def critic_rounds(
             for index, blobs in found.items():
                 objects.setdefault(index, {}).update(blobs)
             entry["tracked"] = len(boxes)
+            entry["found"] = sum(len(blobs) for blobs in found.values())
             streams.append({
                 "concept": f"{CRITIC_PREFIX}{number}",
                 "file": events_file.relative_to(out).as_posix(),
                 "sha256": file_sha256(events_file),
             })
-            masks, _ = occluder_masks(objects, params, proxy_size)
-            if cache_streams is None:
-                cleaned = clean(video, params, geometry, masks, raw_out=None)
-            else:
-                cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None)
+            if found:
+                # Nothing tracked means nothing new to mask; the rebuild would repeat the last one.
+                masks, _ = occluder_masks(objects, params, proxy_size)
+                if cache_streams is None:
+                    cleaned = clean(video, params, geometry, masks, raw_out=None)
+                else:
+                    cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None)
         held = critic.holds(cleaned.kept, defects, keyframes, geometry.size)
         if held.any():
             cleaned = replace(cleaned, kept=cleaned.kept.without(held))
             entry["held"] = int(held.sum())
         record.append(entry)
         if not defects:
+            break
+        if recorded is None and not (found or entry["held"]):
+            # Nothing tracked and nothing held: the next round would see the same picture.
             break
     return cleaned, streams, record
 
