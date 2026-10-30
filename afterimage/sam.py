@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -30,6 +31,39 @@ from openai import AsyncOpenAI
 from . import ledger
 from .config import META_BASE_URL, SAM_MODEL, meta_api_key
 from .masks import Blob, resize_nearest
+
+try:  # the parser's decoder without its canonical re-encode (see _raster)
+    from meta_sam_parser._mask_codec import _decode_raster
+except ImportError:  # pragma: no cover - older or newer parser layouts
+    _decode_raster = None
+
+try:
+    from meta_sam_parser import InvalidSegmentationMaskError
+    from meta_sam_parser import _segmentation as _parser_segmentation
+except ImportError:  # pragma: no cover - older or newer parser layouts
+    _parser_segmentation = None
+
+
+def _mask_shape_only(mask) -> bytes:
+    """Stands in for the parser's per-mask validation while a stream is read.
+
+    The parser decodes every mask, then re-encodes it to check it is canonical, and throws the
+    pixels away: pure Python, a context-coded bit per pixel, an hour and a half for one concept
+    over an 84-minute session, before any mask is used. The masks are decoded once in
+    frame_objects, in parallel, where a bad payload fails instead. The stream file itself is
+    hashed into the receipt.
+    """
+    payload = getattr(mask, "payload", None)
+    if not isinstance(payload, str) or mask.width <= 0 or mask.height <= 0:
+        raise InvalidSegmentationMaskError("Mask payload must be a string with positive dimensions.")
+    prefix = {"one_bit": "!", "lossless": "~"}.get(mask.encoding)
+    if prefix is None or not payload.startswith(prefix):
+        raise InvalidSegmentationMaskError(f"Unsupported or malformed {mask.encoding} mask payload.")
+    return b""
+
+
+if _parser_segmentation is not None:
+    _parser_segmentation.decode_mask_to_raster = _mask_shape_only
 
 PRICE_PER_FRAME = 0.20 / 1000
 MIN_BILLED_FRAMES = 50
@@ -203,6 +237,13 @@ async def segment_boxes(
     )
 
 
+DECODE_WORKERS = 6
+"""Processes decoding masks side by side. The reference decoder is pure Python, a context-coded bit
+per pixel: a person's masks over an 84-minute session took one core an hour and a half."""
+PARALLEL_FROM = 64
+"""Fewer records than this are decoded in-process; a pool is not worth its start-up."""
+
+
 def frame_objects(result: VideoSegmentationResult, *, prefix: str = "") -> dict[int, dict[str, Blob]]:
     """Each object's mask per frame, keyed by `prefix` + SAM's object id."""
     latest: dict[tuple[int, str], SegmentationMaskRecord] = {}
@@ -212,12 +253,23 @@ def frame_objects(result: VideoSegmentationResult, *, prefix: str = "") -> dict[
         key = (record.frame.frame_index, record.object_id)
         if key not in latest or record.revision > latest[key].revision:
             latest[key] = record
+    keys = list(latest)
     objects: dict[int, dict[str, Blob]] = {}
-    for (frame_index, object_id), record in latest.items():
-        blob = _blob(record)
+    for (frame_index, object_id), blob in zip(keys, _decode_all([latest[key] for key in keys])):
         if blob is not None and blob.area:
             objects.setdefault(frame_index, {})[prefix + object_id] = blob
     return objects
+
+
+def _decode_all(records: list[SegmentationMaskRecord]) -> list[Blob | None]:
+    """The records' masks as blobs, decoded in parallel when there are many."""
+    if len(records) < PARALLEL_FROM:
+        return [_blob(record) for record in records]
+    from concurrent.futures import ProcessPoolExecutor
+
+    workers = max(1, min(os.cpu_count() or 1, DECODE_WORKERS))
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(_blob, records, chunksize=32))
 
 
 def frame_masks(result: VideoSegmentationResult, size: tuple[int, int]) -> dict[int, np.ndarray]:
@@ -232,9 +284,17 @@ def frame_masks(result: VideoSegmentationResult, size: tuple[int, int]) -> dict[
     return masks
 
 
+def _raster(mask) -> bytes:
+    """The mask's pixels. The strict decoder re-encodes every mask to check it is canonical, which
+    doubles the cost; the payload is already hashed as part of the event stream, so decode only."""
+    if mask.encoding == "one_bit" and _decode_raster is not None and isinstance(mask.payload, str):
+        return _decode_raster(mask.payload, int(mask.width), int(mask.height))
+    return decode_mask_to_raster(mask)
+
+
 def _blob(record: SegmentationMaskRecord) -> Blob | None:
     # Masks come box-local: a small raster plus the box it belongs in, in source pixels.
-    raster = np.frombuffer(decode_mask_to_raster(record.mask), dtype=np.uint8).astype(bool)
+    raster = np.frombuffer(_raster(record.mask), dtype=np.uint8).astype(bool)
     raster = raster.reshape(record.mask.height, record.mask.width)
     bounds = record.bounds
     left, top = round(bounds.left), round(bounds.top)

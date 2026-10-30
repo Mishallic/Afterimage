@@ -110,7 +110,7 @@ class OpenModeTest(unittest.TestCase):
         asked.assert_called_once()
         self.assertEqual(checked.call_count, len(receipt["critic"]["rounds"][0]["keyframes"]), "one check per reported object")
         boxed.assert_called_once()
-        self.assertTrue(receipt["sam_streams"][-1]["file"].endswith("critic-1.npz"))
+        self.assertRegex(receipt["sam_streams"][-1]["file"], r"critic-1-[0-9a-f]{8}\.npz$")
         self.assertEqual(receipt["critic"]["rounds"][0]["tracked"], len(receipt["critic"]["rounds"][0]["keyframes"]))
         self.assertLess(self.error(final, self.ring), 20)
         self.assertEqual(receipt["models"]["spark"], f"{spark.SPARK_OPEN_MODEL} via Baseten")

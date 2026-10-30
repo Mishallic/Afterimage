@@ -251,8 +251,26 @@ async def _sam_objects(
         }
     objects: dict[int, dict] = {}
     for concept, result in results.items():
-        for index, blobs in sam.frame_objects(result, prefix=f"{concept}:").items():
+        for index, blobs in _decoded(events[concept], result, prefix=f"{concept}:").items():
             objects.setdefault(index, {}).update(blobs)
+    return objects
+
+
+def _decoded(events_file: Path, result, *, prefix: str) -> Objects:
+    """sam.frame_objects(result), kept beside the event stream it came from.
+
+    Decoding the API's masks is minutes of pure Python per stream, so the blobs are saved as a
+    mask file tagged with the stream's hash and loaded on the next run. verify hashes the stream,
+    not this file; it is derived data, like the clean-pass cache.
+    """
+    cache = events_file.with_name(f"{events_file.name}.masks.npz")
+    sha = file_sha256(events_file)
+    if cache.exists():
+        objects, meta = maskfile.load(cache)
+        if meta.get("events_sha256") == sha and meta.get("prefix") == prefix:
+            return objects
+    objects = sam.frame_objects(result, prefix=prefix)
+    maskfile.save(cache, objects, {"events_sha256": sha, "prefix": prefix})
     return objects
 
 
@@ -437,7 +455,12 @@ def critic_rounds(
         )
         found: dict = {}
         if boxes:
-            events_file = work / (f"critic-{number}.npz" if params.masks == "open" else f"critic-{number}.events.ndjson")
+            # Named by the boxes as well: after a code change the same round can ask different
+            # ones, and a stream from the earlier question must not be taken for theirs.
+            asked_for = hashlib.sha256(json.dumps(boxes).encode()).hexdigest()[:8]
+            events_file = work / (
+                f"critic-{number}-{asked_for}.npz" if params.masks == "open" else f"critic-{number}-{asked_for}.events.ndjson"
+            )
             found = asyncio.run(_tracked_objects(
                 params.masks, proxy, proxy_size, boxes, events_file, frames, work, f"{CRITIC_PREFIX}{number}:"
             ))
