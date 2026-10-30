@@ -6,6 +6,7 @@ and can be re-parsed offline as often as we like.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import AsyncIterator
@@ -23,6 +24,8 @@ from meta_sam_parser import (
     parse_responses_stream,
     video_segmentation_format,
 )
+import httpx
+import openai
 from openai import AsyncOpenAI
 
 from . import ledger
@@ -33,10 +36,22 @@ PRICE_PER_FRAME = 0.20 / 1000
 MIN_BILLED_FRAMES = 50
 MAX_FRAMES_PER_CALL = 15_000
 MAX_OBJECTS_PER_CALL = 16
+STREAM_READ_TIMEOUT = 300.0
+"""Seconds without a streamed event before a SAM call counts as stalled. A full session streams
+an event every few seconds; on Oct 30 one call sat silent for 36 minutes and would have for ever."""
+STREAM_ATTEMPTS = 3
+"""A stalled or dropped stream is started over, this many times at most; each attempt is in the ledger."""
 
 
 def client() -> AsyncOpenAI:
-    return AsyncOpenAI(base_url=META_BASE_URL, api_key=meta_api_key())
+    return AsyncOpenAI(
+        base_url=META_BASE_URL, api_key=meta_api_key(),
+        timeout=httpx.Timeout(STREAM_READ_TIMEOUT, connect=60.0), max_retries=2,
+    )
+
+
+class StreamIncomplete(RuntimeError):
+    """The stream ended without SAM's final response: the connection went, not the job."""
 
 
 def estimated_cost(frames: int) -> float:
@@ -106,25 +121,44 @@ async def _segment(
     if not events_file.exists():
         events_file.parent.mkdir(parents=True, exist_ok=True)
         partial = events_file.with_suffix(".partial")
-        with ledger.call(
-            "responses.create", purpose, model=SAM_MODEL,
-            prompt=prompt, file_id=file_id, direction=direction, frames=frames,
-            est_cost_usd=None if frames is None else round(estimated_cost(frames), 4),
-        ) as logged:
-            count = 0
-            with partial.open("w", encoding="utf-8") as handle:
-                async for event in _stream_events(api, file_id, prompt, direction):
-                    handle.write(json.dumps(event) + "\n")
-                    count += 1
-                    body = event.get("response")
-                    if isinstance(body, dict):
-                        logged["id"] = body.get("id") or logged.get("id")
-                        if body.get("usage"):
-                            logged["usage"] = body["usage"]
-            logged["events"] = count
-            logged["events_sha256"] = ledger.file_sha256(partial)
+        for attempt in range(1, STREAM_ATTEMPTS + 1):
+            try:
+                await _record(api, file_id, prompt, direction, partial, purpose=purpose, frames=frames, attempt=attempt)
+                break
+            except (openai.APITimeoutError, openai.APIConnectionError, httpx.HTTPError, StreamIncomplete):
+                partial.unlink(missing_ok=True)
+                if attempt == STREAM_ATTEMPTS:
+                    raise
+                await asyncio.sleep(15 * attempt)
         partial.replace(events_file)
     return await parse_cached(events_file)
+
+
+async def _record(
+    api: AsyncOpenAI, file_id: str, prompt: str, direction: str, partial: Path,
+    *, purpose: str, frames: int | None, attempt: int,
+) -> None:
+    """One streamed SAM call written to `partial`, event by event, with its own ledger entry."""
+    with ledger.call(
+        "responses.create", purpose if attempt == 1 else f"{purpose} (attempt {attempt})", model=SAM_MODEL,
+        prompt=prompt, file_id=file_id, direction=direction, frames=frames,
+        est_cost_usd=None if frames is None else round(estimated_cost(frames), 4),
+    ) as logged:
+        count = 0
+        with partial.open("w", encoding="utf-8") as handle:
+            async for event in _stream_events(api, file_id, prompt, direction):
+                handle.write(json.dumps(event) + "
+")
+                count += 1
+                body = event.get("response")
+                if isinstance(body, dict):
+                    logged["id"] = body.get("id") or logged.get("id")
+                    if body.get("usage"):
+                        logged["usage"] = body["usage"]
+        logged["events"] = count
+        logged["events_sha256"] = ledger.file_sha256(partial)
+        if "usage" not in logged:
+            raise StreamIncomplete(f"{purpose}: {count} events, then the stream ended without the final response")
 
 
 async def segment_concept(
