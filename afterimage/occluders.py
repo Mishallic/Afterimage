@@ -71,13 +71,44 @@ def painted(objects: Objects, canvas: np.ndarray, fps: float) -> set[str]:
     return keys
 
 
-def occluders(objects: Objects, painted_keys: set[str], shape: tuple[int, int]) -> dict[int, np.ndarray]:
-    """Per frame, the union of every object that is the painter or their tools."""
-    masks = {}
-    for frame, blobs in objects.items():
-        target = np.zeros(shape, dtype=bool)
-        for key, blob in blobs.items():
-            if key not in painted_keys:
+class Occluders:
+    """Per frame, the union of every object that is the painter or their tools, built when asked for.
+
+    Behaves like {frame: bool mask}. An 84-minute session has five thousand frames, and a
+    full-frame mask for each would be gigabytes; a blob is pasted into a fresh mask on demand.
+    """
+
+    def __init__(self, objects: Objects, painted_keys: set[str], shape: tuple[int, int]) -> None:
+        self._objects = objects
+        self._painted = painted_keys
+        self.shape = shape
+
+    def get(self, frame: int, default: np.ndarray | None = None) -> np.ndarray | None:
+        if frame not in self._objects:
+            return default
+        return self[frame]
+
+    def __getitem__(self, frame: int) -> np.ndarray:
+        target = np.zeros(self.shape, dtype=bool)
+        for key, blob in self._objects[frame].items():
+            if key not in self._painted:
                 blob.paste_into(target)
-        masks[frame] = target
-    return masks
+        return target
+
+    def __contains__(self, frame: object) -> bool:
+        return frame in self._objects
+
+    def __iter__(self):
+        return iter(self._objects)
+
+    def __len__(self) -> int:
+        return len(self._objects)
+
+    def items(self):
+        for frame in self._objects:
+            yield frame, self[frame]
+
+
+def occluders(objects: Objects, painted_keys: set[str], shape: tuple[int, int]) -> Occluders:
+    """Per frame, the union of every object that is the painter or their tools."""
+    return Occluders(objects, painted_keys, shape)

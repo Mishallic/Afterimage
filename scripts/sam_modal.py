@@ -50,6 +50,8 @@ image = (
 )
 app = modal.App(APP)
 weights = modal.Volume.from_name("afterimage-hf-cache", create_if_missing=True)
+videos = modal.Volume.from_name("afterimage-videos", create_if_missing=True)
+"""Proxies the pipeline uploads (streamed, named by content hash) instead of passing them as arguments."""
 
 
 def _numpy(value):
@@ -109,7 +111,7 @@ def _gpu_name() -> str:
     image=image,
     gpu=GPUS,
     secrets=[modal.Secret.from_name("huggingface")],
-    volumes={"/root/.cache/huggingface": weights},
+    volumes={"/root/.cache/huggingface": weights, "/videos": videos},
     timeout=3 * 60 * 60,
     scaledown_window=180,
 )
@@ -213,17 +215,27 @@ class Tracker:
         return int(stream.get("nb_read_frames") or stream.get("nb_frames") or 0)
 
     @modal.method()
-    def track(self, video: bytes, prompts: list[dict]) -> bytes:
+    def track(self, prompts: list[dict], *, path: str | None = None, video: bytes | None = None) -> bytes:
         """Masks for every prompt over the whole video, as maskfile bytes.
 
         prompts: [{"text": "hand"}, ...] or [{"frame": 120, "box": [left, top, right, bottom]}, ...]
-        (boxes in the video's pixels, half-open).
+        (boxes in the video's pixels, half-open). The video is either `path`, a file on the
+        afterimage-videos volume (how the pipeline sends an hour of footage), or `video`, the
+        bytes of a short clip.
         """
+        import shutil
         import tempfile
 
         folder = Path(tempfile.mkdtemp())
-        path = folder / "video.mp4"
-        path.write_bytes(video)
+        local = folder / "video.mp4"
+        if path is not None:
+            videos.reload()
+            shutil.copyfile(Path("/videos") / path, local)
+        elif video is not None:
+            local.write_bytes(video)
+        else:
+            raise ValueError("track needs a volume path or the video's bytes")
+        path = local
         frames = self._frames(path)
         frame_masks: dict = {}
         texts = [p for p in prompts if "text" in p]
@@ -257,7 +269,7 @@ def main(
     proxy = work / "proxy.mp4"
     if not proxy.exists():
         media.make_proxy(source, proxy, fps=fps, size=size, seconds=seconds, start=start)
-    data = Tracker().track.remote(proxy.read_bytes(), [{"text": c} for c in concept])
+    data = Tracker().track.remote([{"text": c} for c in concept], video=proxy.read_bytes())
     (work / "masks.npz").write_bytes(data)
     objects, meta = maskfile.unpack(data)
     print(f"{sum(len(b) for b in objects.values())} object-frames over {len(objects)} frames on {meta.get('gpu')}")

@@ -16,6 +16,13 @@ from .occluders import Objects
 APP = "afterimage-sam"
 CLASS = "Tracker"
 FUNCTION = "track"
+VIDEOS = "afterimage-videos"
+"""The Modal volume proxies are uploaded to, named by content hash, so a video goes up once.
+
+Passing the video as a function argument holds it in memory twice over (the bytes and their
+serialised copy); an 84-minute proxy is half a gigabyte, and the first full session ran this
+machine out of memory that way. The volume upload streams from disk.
+"""
 MODEL = "facebook/sam3.1 (open weights, Modal)"
 GPU_USD_PER_HOUR = 1.10
 """Rough A10 rate, for the cost column of the ledger; Modal bills per second."""
@@ -40,7 +47,8 @@ def _result(proxy: Path, prompts: list[dict], call_file: Path) -> bytes:
     if call_file.exists():
         call = modal.FunctionCall.from_id(call_file.read_text(encoding="utf-8").strip())
     else:
-        call = getattr(modal.Cls.from_name(APP, CLASS)(), FUNCTION).spawn(proxy.read_bytes(), prompts)
+        name = _uploaded(modal, proxy)
+        call = getattr(modal.Cls.from_name(APP, CLASS)(), FUNCTION).spawn(prompts, path=name)
         call_file.parent.mkdir(parents=True, exist_ok=True)
         call_file.write_text(call.object_id, encoding="utf-8")
     for attempt in range(1, RETRIES + 1):
@@ -53,6 +61,16 @@ def _result(proxy: Path, prompts: list[dict], call_file: Path) -> bytes:
             time.sleep(10 * attempt)
     call_file.unlink(missing_ok=True)
     return data
+
+
+def _uploaded(modal, proxy: Path) -> str:
+    """The proxy's name on the shared volume, uploading it (streamed from disk) if it isn't there yet."""
+    name = f"{ledger.file_sha256(proxy)}.mp4"
+    volume = modal.Volume.from_name(VIDEOS, create_if_missing=True)
+    if name not in {Path(entry.path).name for entry in volume.listdir("/")}:
+        with volume.batch_upload() as batch:
+            batch.put_file(str(proxy), f"/{name}")
+    return name
 
 
 def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames: int | None) -> Objects:

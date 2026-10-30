@@ -11,8 +11,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from .geometry import order_corners
+from .geometry import corners_from_mask, order_corners, polygon_mask
+from .masks import dilate
 
+SHRINK = 4
+"""The coarse fix works on every fourth pixel: it only has to land within a band of the edges."""
+SHADE = 30.0
+"""Whiteness (0-255) the canvas may fall below its median by, across the lamp's falloff.
+
+On session 1 the canvas ran from 172 to 211 in the darkest channel; the wall and the pine easel
+stayed under 125 in whiteness.
+"""
 BAND = 0.12
 """How far either side of a rough edge to look, as a share of the frame's shorter side."""
 SAMPLES = 48
@@ -39,11 +48,13 @@ def snap_corners(frame: np.ndarray, corners: np.ndarray) -> np.ndarray | None:
     fits: an edge without a clear step, a corner that would move too far, or a quadrilateral
     that isn't convex.
     """
-    # A white canvas is bright in every channel; walls, wood and paint are not.
-    brightness = frame.min(axis=2).astype(np.float32)
+    brightness = _whiteness(frame)
     height, width = brightness.shape
     reach = int(round(BAND * min(width, height)))
     points = order_corners(corners)
+    coarse = _coarse_quad(brightness, points)
+    if coarse is not None:
+        points = coarse
     lines = []
     for index in range(4):
         line = _edge_line(brightness, points[index], points[(index + 1) % 4], reach)
@@ -60,6 +71,49 @@ def snap_corners(frame: np.ndarray, corners: np.ndarray) -> np.ndarray | None:
     if np.hypot(*(moved - points).T).max() > MAX_SHIFT * reach or not _convex(moved):
         return None
     return order_corners(moved)
+
+
+def _whiteness(frame: np.ndarray) -> np.ndarray:
+    """How white each pixel is: bright in every channel and the same in all three.
+
+    A primed canvas is white; the wall, the easel's pine and the paint are either darker or
+    coloured, and a coloured surface loses half its spread between channels here, so light
+    wood next to the canvas doesn't pass for it.
+    """
+    channels = frame.astype(np.float32)
+    low, high = channels.min(axis=2), channels.max(axis=2)
+    return low - 0.5 * (high - low)
+
+
+def _coarse_quad(brightness: np.ndarray, rough: np.ndarray) -> np.ndarray | None:
+    """A first fix on the canvas when the rough quadrilateral is far off: the bright region around its centre.
+
+    Spark's corners can miss by a tenth of the frame or more. The canvas is still the one
+    large bright thing near them, so the connected bright region grown from the quad's centre,
+    at a quarter of the resolution, gives corners the edge search can start from. None when
+    the centre isn't on anything bright or the region is too small to be a canvas.
+    """
+    small = brightness[::SHRINK, ::SHRINK]
+    inside = polygon_mask(rough / SHRINK, small.shape)
+    if inside.sum() < 100:
+        return None
+    level = float(np.median(small[inside]))
+    bright = small >= level - SHADE
+    centre = rough.mean(axis=0) / SHRINK
+    column, row = int(centre[0]), int(centre[1])
+    if not (0 <= row < small.shape[0] and 0 <= column < small.shape[1]) or not bright[row, column]:
+        return None
+    region = np.zeros_like(bright)
+    region[row, column] = True
+    while True:
+        grown = dilate(region, 1) & bright
+        if grown.sum() == region.sum():
+            break
+        region = grown
+    if region.sum() < 0.25 * inside.sum():
+        return None
+    quad = corners_from_mask(region)
+    return None if quad is None else order_corners(quad * SHRINK)
 
 
 def _edge_line(

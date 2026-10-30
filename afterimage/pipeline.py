@@ -161,6 +161,8 @@ class Cleaned:
     """Share of the uncovered canvas that differed from the plate, per update (see CleanPlate)."""
     gains: list[list[float]] = field(default_factory=list)
     """The exposure gain the plate measured, per update."""
+    vetoed_mask: np.ndarray | None = None
+    """Which entries of `timeline` the transient veto dropped (kept = timeline without them)."""
 
     def diagnostics(self, fps: float) -> dict:
         """Per-frame numbers worth keeping next to the outputs, for looking into a run."""
@@ -350,6 +352,7 @@ async def _tracked_objects(
 def critic_rounds(
     video: Path, params: Params, geometry: Geometry, out: Path, objects: Objects,
     proxy_size: tuple[int, int], cleaned: Cleaned, *, recorded: list[dict] | None = None,
+    cache_streams: list[dict] | None = None,
 ) -> tuple[Cleaned, list[dict], list[dict]]:
     """Spark inspects the reconstruction and SAM fixes what it finds, up to params.critic_rounds times.
 
@@ -411,7 +414,10 @@ def critic_rounds(
                 "sha256": file_sha256(events_file),
             })
             masks, _ = occluder_masks(objects, params, proxy_size)
-            cleaned = clean(video, params, geometry, masks, raw_out=None)
+            if cache_streams is None:
+                cleaned = clean(video, params, geometry, masks, raw_out=None)
+            else:
+                cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None)
         held = critic.holds(cleaned.kept, defects, keyframes, geometry.size)
         if held.any():
             cleaned = replace(cleaned, kept=cleaned.kept.without(held))
@@ -482,8 +488,70 @@ def clean(
     timeline = plate.timeline()
     vetoed = timeline.transients(threshold=plate.config.change_threshold, window=params.revert_frames)
     return Cleaned(
-        start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion, stillness, disagreement, gains
+        start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion, stillness, disagreement, gains,
+        vetoed,
     )
+
+
+CLEAN_CACHE_VERSION = 1
+
+
+def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict]) -> str:
+    stat = video.stat()
+    payload = {
+        "version": CLEAN_CACHE_VERSION,
+        "video": [video.name, stat.st_size, int(stat.st_mtime)],
+        "params": params.to_dict(),
+        "size": list(geometry.size),
+        "streams": [stream.get("sha256") for stream in streams],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
+def cached_clean(
+    video: Path, params: Params, geometry: Geometry, masks, streams: list[dict], out: Path, *,
+    raw_out: Path | None,
+) -> Cleaned:
+    """clean(), with its result kept next to the outputs.
+
+    The clean pass is the hour of a run. A re-run with the same footage, parameters and mask
+    streams (keyed by their hashes) loads it instead. verify() never comes here: re-deriving
+    is its point.
+    """
+    cache = out / f"clean-{_clean_key(video, params, geometry, streams)}.npz"
+    if cache.exists() and (raw_out is None or raw_out.exists()):
+        return _load_cleaned(cache)
+    cleaned = clean(video, params, geometry, masks, raw_out=raw_out)
+    _save_cleaned(cache, cleaned)
+    return cleaned
+
+
+def _save_cleaned(path: Path, cleaned: Cleaned) -> None:
+    vetoed = cleaned.vetoed_mask
+    if vetoed is None:
+        vetoed = np.zeros(len(cleaned.timeline), dtype=bool)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(
+        path, version=np.int32(CLEAN_CACHE_VERSION), start=cleaned.start,
+        pixel=cleaned.timeline.pixel, frame=cleaned.timeline.frame,
+        before=cleaned.timeline.before, after=cleaned.timeline.after, vetoed=vetoed,
+        occlusion=np.array(cleaned.occlusion, dtype=np.float32),
+        stillness=np.array(cleaned.stillness, dtype=np.float32),
+        disagreement=np.array(cleaned.disagreement, dtype=np.float32),
+        gains=np.array(cleaned.gains, dtype=np.float32).reshape(-1, 3),
+    )
+
+
+def _load_cleaned(path: Path) -> Cleaned:
+    with np.load(path) as data:
+        start = data["start"]
+        timeline = Timeline(start.shape[:2], data["pixel"], data["frame"], data["before"], data["after"])
+        vetoed = data["vetoed"]
+        return Cleaned(
+            start, timeline, timeline.without(vetoed), int(vetoed.sum()),
+            data["occlusion"].tolist(), data["stillness"].tolist(), data["disagreement"].tolist(),
+            data["gains"].tolist(), vetoed,
+        )
 
 
 def replay(
@@ -559,12 +627,14 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
 
     geometry = Geometry.of(info, params)
-    cleaned = clean(video, params, geometry, masks, raw_out=out / "raw.mp4")
+    cleaned = cached_clean(video, params, geometry, masks, streams, out, raw_out=out / "raw.mp4")
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
     rounds: list[dict] = []
     if objects is not None and params.critic_rounds:
         with ledger.recording(out / LEDGER):
-            cleaned, box_streams, rounds = critic_rounds(video, params, geometry, out, objects, proxy_size, cleaned)
+            cleaned, box_streams, rounds = critic_rounds(
+                video, params, geometry, out, objects, proxy_size, cleaned, cache_streams=streams
+            )
         streams += box_streams
         for entry in rounds:
             print(f"  critic round {entry['round']}: {len(entry['defects'])} leftover(s), "

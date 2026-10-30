@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from afterimage import maskfile, media, pipeline, sam_open, spark
+from afterimage import ledger, maskfile, media, pipeline, sam_open, spark
 from afterimage.masks import Blob, dilate
 from afterimage.pipeline import Params
 from tests.synthetic import resting_hand_session
@@ -126,10 +126,11 @@ class ResumeTest(unittest.TestCase):
         call.get.side_effect = [ConnectionError("dns")] * failures + [data]
         tracker = mock.Mock()
         tracker.track.spawn.return_value = call
-        modal = mock.Mock()
+        modal = mock.MagicMock()
         modal.Cls.from_name.return_value.return_value = tracker
         modal.FunctionCall.from_id.return_value = call
         modal.exception.ConnectionError = ConnectionError
+        modal.Volume.from_name.return_value.listdir.return_value = []
         self.addCleanup(mock.patch.stopall)
         mock.patch.object(sam_open, "_modal", return_value=modal).start()
         mock.patch.object(sam_open.time, "sleep").start()
@@ -142,8 +143,22 @@ class ResumeTest(unittest.TestCase):
             proxy.write_bytes(b"video")
             call_file = Path(folder) / "concepts.call"
             self.assertEqual(sam_open._result(proxy, [{"text": "hand"}], call_file), b"masks")
-            modal.Cls.from_name.return_value.return_value.track.spawn.assert_called_once_with(b"video", [{"text": "hand"}])
+            name = f"{ledger.file_sha256(proxy)}.mp4"
+            volume = modal.Volume.from_name.return_value
+            volume.batch_upload.return_value.__enter__.return_value.put_file.assert_called_once_with(str(proxy), f"/{name}")
+            modal.Cls.from_name.return_value.return_value.track.spawn.assert_called_once_with([{"text": "hand"}], path=name)
             self.assertFalse(call_file.exists())
+
+    def test_a_proxy_already_on_the_volume_is_not_uploaded_again(self) -> None:
+        modal, _ = self.fake_modal(b"masks")
+        with tempfile.TemporaryDirectory() as folder:
+            proxy = Path(folder) / "proxy.mp4"
+            proxy.write_bytes(b"video")
+            name = f"{ledger.file_sha256(proxy)}.mp4"
+            volume = modal.Volume.from_name.return_value
+            volume.listdir.return_value = [mock.Mock(path=f"/{name}")]
+            sam_open._result(proxy, [{"text": "hand"}], Path(folder) / "concepts.call")
+            volume.batch_upload.assert_not_called()
 
     def test_a_dropped_connection_is_retried_and_a_saved_call_is_resumed(self) -> None:
         modal, call = self.fake_modal(b"masks", failures=2)

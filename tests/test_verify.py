@@ -6,10 +6,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
-from afterimage import media
+from afterimage import media, pipeline
 from afterimage.pipeline import Params, run, verify
 from tests.synthetic import synthetic_session
 
@@ -69,6 +70,14 @@ class VerifyTest(unittest.TestCase):
         self.assertTrue(stills)
         self.assertTrue((self.out / "underneath.mp4").exists())
         self.assertIn(stills[0].name, page)
+
+    def test_a_second_run_reuses_the_clean_pass_and_matches(self) -> None:
+        self.assertTrue(list(self.out.glob("clean-*.npz")))
+        params = Params(fps=2, width=SIZE[0], masks="motion")
+        with mock.patch.object(pipeline, "clean", side_effect=AssertionError("the clean pass ran again")):
+            again = run(self.video, self.out, params, title="t", reels=False)
+        self.assertEqual(again["output"]["canvas_sha256"], self.receipt["output"]["canvas_sha256"])
+        self.assertEqual(again["timeline"], self.receipt["timeline"])
 
     def test_real_footage_verifies(self) -> None:
         verdict = verify(self.out / "receipt.json", self.video)
