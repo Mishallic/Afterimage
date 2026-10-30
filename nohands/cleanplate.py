@@ -17,6 +17,35 @@ from .masks import dilate, resize_nearest
 from .timeline import Timeline
 
 
+GAIN_STEP = 4
+"""Exposure is measured on every fourth row and column: a global quantity needs no more."""
+GAIN_PERCENTILE = 80.0
+"""Which per-pixel ratio counts as the exposure.
+
+A shadow only ever darkens, so when the painter's shadow (never in the masks) lies over part of
+the sample, the brightest ratios are the ones with nothing in the way. The median would take a
+shadow over half the canvas for a darker exposure, and brighten everything else to match.
+"""
+REFERENCE_AGE = 300
+"""Updates a committed value must have stood before exposure is measured against it.
+
+A shadow or a glint that sits still long enough to commit must not become the yardstick for the
+frames after it leaves, or its leaving would read as a change of light.
+"""
+MIN_VISIBLE = 0.3
+"""Below this share of the canvas uncovered, exposure isn't measured and the last gain is kept.
+
+A sliver of margin next to the painter is in their shadow more often than not, and says nothing
+about the light on the canvas.
+"""
+MAX_DISAGREEMENT = 0.5
+"""When more of the uncovered canvas than this differs from the plate at once, the frame is not a
+view of the canvas: someone walked in front of the lens, the camera was bumped, the light
+switched. Painting never changes half the canvas in a second."""
+BLIND_FRAMES = 30
+"""How many such updates in a row are skipped before the plate accepts that the scene has changed."""
+
+
 def _to_uint8(values: np.ndarray) -> np.ndarray:
     return np.clip(values + 0.5, 0, 255).astype(np.uint8)
 
@@ -46,17 +75,23 @@ def visible_mask(occluder: np.ndarray | None, shape: tuple[int, int], dilate_px:
     return ~dilate(resize_nearest(occluder.astype(bool), shape), dilate_px)
 
 
-def exposure_gain(current: np.ndarray, reference: np.ndarray, usable: np.ndarray) -> np.ndarray | None:
+def exposure_gain(
+    current: np.ndarray, reference: np.ndarray, usable: np.ndarray, *, step: int = 1, percentile: float = 50.0,
+) -> np.ndarray | None:
     """Per-channel gain from `reference` to `current`: phone auto-exposure and white-balance drift.
 
-    Measured on the `usable` pixels; None when too few of them are well lit to tell.
+    Measured on every `step`-th row and column of the `usable` pixels; None when too few of them
+    are well lit to tell. The `percentile` of the per-pixel ratios is taken as the gain: the
+    median ignores the small share of pixels that changed because of new paint, and a higher one
+    also ignores a shadow over part of the sample (see GAIN_PERCENTILE).
     """
+    if step > 1:
+        current, reference, usable = current[::step, ::step], reference[::step, ::step], usable[::step, ::step]
     sample, base = current[usable], reference[usable]
     lit = base.min(axis=1) > 20
     if lit.sum() < 500:
         return None
-    # The median ignores the small share of pixels that changed because of new paint.
-    return np.clip(np.median(sample[lit] / base[lit], axis=0), 0.6, 1.6)
+    return np.clip(np.percentile(sample[lit] / base[lit], percentile, axis=0), 0.6, 1.6)
 
 
 def first_visible_canvas(
@@ -88,7 +123,7 @@ def first_visible_canvas(
     for frame, occluder in chain([(frame, occluder)], pairs):
         current = frame.astype(np.float32)
         visible = visible_mask(occluder, shape, dilate_px)
-        gain = exposure_gain(current, anchor, visible & anchor_visible)
+        gain = exposure_gain(current, anchor, visible & anchor_visible, step=GAIN_STEP, percentile=GAIN_PERCENTILE)
         if gain is not None:
             current /= gain
 
@@ -122,6 +157,16 @@ class CleanPlate:
         self.config = config or CleanPlateConfig()
         self._clean = initial_canvas.astype(np.float32)
         self._candidate = self._clean.copy()
+        self._reference = self._clean.copy()
+        """What each pixel looked like when it was last committed (the start canvas until then).
+
+        Exposure is measured against this, never against the drifting plate: measured against
+        the plate, the painter's shadow pulls the gain down, the plate brightens to match, and
+        the next estimate takes the brighter plate as the truth. Over an hour that runs away.
+        """
+        self._committed_at = np.full(initial_canvas.shape[:2], -REFERENCE_AGE, dtype=np.int32)
+        self.gain = np.ones(3, dtype=np.float32)
+        """The exposure gain last measured (or carried over when it couldn't be)."""
         self._streak = np.zeros(initial_canvas.shape[:2], dtype=np.int32)
         self._since = np.zeros(initial_canvas.shape[:2], dtype=np.int32)
         """Update at which each pixel's current run of a new value started."""
@@ -129,6 +174,13 @@ class CleanPlate:
         """Pixels that became new paint in the most recent update."""
         self.painted_at = np.full(initial_canvas.shape[:2], -1, dtype=np.int32)
         """Update at which each pixel's latest paint was first seen; -1 if it never changed."""
+        self.disagreement = 0.0
+        """Share of the uncovered canvas that differed from the plate in the most recent update.
+
+        A stroke in progress is a percent or two; a bumped, blocked or blurred camera is most of it.
+        """
+        self._blind = 0
+        """Updates skipped in a row because the frame was no view of the canvas (see MAX_DISAGREEMENT)."""
         self._updates = 0
         self._commits: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
 
@@ -143,12 +195,25 @@ class CleanPlate:
         cfg = self.config
         current = frame.astype(np.float32)
         visible = visible_mask(occluder, frame.shape[:2], cfg.dilate_px)
+        gain = self.gain
         if cfg.normalize_exposure:
-            current = self._match_exposure(current, visible)
+            current, gain = self._match_exposure(current, visible)
 
         differs = np.abs(current - self._clean).max(axis=2) > cfg.change_threshold
         steady = np.abs(current - self._candidate).max(axis=2) <= cfg.change_threshold
         changing = visible & differs
+        self.disagreement = float(changing.sum() / max(int(visible.sum()), 1))
+        if self.disagreement > MAX_DISAGREEMENT:
+            if self._blind < BLIND_FRAMES:
+                # Not a view of the canvas: leave every pixel, streak and the gain exactly as they were.
+                self._blind += 1
+                self.last_commit = np.zeros(frame.shape[:2], dtype=bool)
+                self._updates += 1
+                return self.canvas
+            # Past the limit the scene has changed for good; keep taking frames until the plate catches up.
+        else:
+            self._blind = 0
+        self.gain = gain
 
         # Count how long each changed pixel has shown the same new value. Covered
         # pixels keep their streak: we just didn't get to see them this frame.
@@ -174,13 +239,29 @@ class CleanPlate:
                 _to_uint8(self._candidate.reshape(-1, 3)[pixels]),
             ))
         self._clean[commit] = self._candidate[commit]
+        self._reference[commit] = self._candidate[commit]
+        self._committed_at[commit] = self._updates
         self._streak[commit] = 0
         self.last_commit = commit
         self.painted_at[commit] = self._since[commit]
         self._updates += 1
         return self.canvas
 
-    def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> np.ndarray:
-        """Undo phone auto-exposure and white-balance drift, using the uncovered canvas."""
-        gain = exposure_gain(current, self._clean, visible)
-        return current if gain is None else current / gain
+    def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Undo phone auto-exposure and white-balance drift, using the uncovered canvas.
+
+        The bare canvas is the yardstick while enough of it shows; after that, paint that has
+        stood for REFERENCE_AGE updates. When neither shows, or too little of the canvas does,
+        the last gain is kept. Returns the matched frame and the gain used.
+        """
+        gain = None
+        if visible.mean() >= MIN_VISIBLE:
+            bare = self.painted_at < 0
+            settled = self._updates - self._committed_at >= REFERENCE_AGE
+            for usable in (visible & bare, visible & settled):
+                gain = exposure_gain(current, self._reference, usable, step=GAIN_STEP, percentile=GAIN_PERCENTILE)
+                if gain is not None:
+                    break
+        if gain is None:
+            gain = self.gain
+        return current / gain, gain

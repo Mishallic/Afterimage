@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from nohands.cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas, visible_mask
-from tests.synthetic import SKIN, synthetic_session
+from nohands.cleanplate import BLIND_FRAMES, CleanPlate, CleanPlateConfig, first_visible_canvas, visible_mask
+from tests.synthetic import PALETTE, SKIN, shadow_session, synthetic_session
 
 
 def _error(canvas: np.ndarray, truth: np.ndarray) -> np.ndarray:
@@ -71,6 +71,66 @@ class CleanPlateTest(unittest.TestCase):
             raw_errors.append((_error(frame, truth) > 25).mean())
             clean_errors.append((_error(canvas, truth) > 25).mean())
         self.assertLess(np.mean(clean_errors), np.mean(raw_errors) / 3)
+
+
+class ShadowedExposureTest(unittest.TestCase):
+    """A shadow over most of the canvas must not read as a darker exposure.
+
+    If it did, the uncovered part would be brightened to compensate, committed as brighter
+    paint, and the plate would never find its way back: measured against itself, the brighter
+    plate is the new normal. On real footage this ran away by 80 levels over an hour.
+    """
+
+    def test_a_shadow_over_most_of_the_canvas_does_not_brighten_the_rest(self) -> None:
+        session = shadow_session()
+        plate = CleanPlate(session[0][2], CleanPlateConfig(dilate_px=6))
+        brightened = []
+        for frame, mask, truth, shadowed in session:
+            canvas = plate.update(frame, mask)
+            lit = ~shadowed & visible_mask(mask, mask.shape, 6)
+            brightened.append(float((canvas.astype(np.int16) - truth.astype(np.int16))[lit].mean()))
+        self.assertLess(max(brightened), 4.0, "the uncovered canvas was brightened to make up for the shadow")
+        self.assertLess(_error(plate.canvas, session[-1][2]).mean(), 3.0)
+        self.assertAlmostEqual(float(plate.gain.mean()), 1.0, delta=0.12)
+
+    def test_exposure_is_not_measured_on_a_sliver_of_canvas(self) -> None:
+        session = synthetic_session()
+        plate = CleanPlate(session[0][2], CleanPlateConfig(dilate_px=6))
+        plate.update(session[0][0], session[0][1])
+        before = plate.gain.copy()
+        shadowed = np.clip(session[1][2].astype(np.float32) * 0.6, 0, 255).astype(np.uint8)
+        covered = np.zeros(shadowed.shape[:2], dtype=bool)
+        covered[:, :int(shadowed.shape[1] * 0.8)] = True
+        plate.update(shadowed, covered)
+        np.testing.assert_allclose(plate.gain, before)
+
+
+class BlindFramesTest(unittest.TestCase):
+    """A frame that is no view of the canvas changes nothing; a scene that really changed gets through."""
+
+    def test_someone_walking_in_front_of_the_lens_is_not_committed(self) -> None:
+        session = synthetic_session()
+        plate = CleanPlate(session[0][2], CleanPlateConfig(dilate_px=6))
+        shirt = np.full_like(session[0][0], (180, 60, 40))
+        nothing_masked = np.zeros(session[0][1].shape, dtype=bool)
+        for index, (frame, mask, _) in enumerate(session):
+            if 30 <= index < 42:  # far longer than the persistence, and SAM saw nothing
+                plate.update(shirt, nothing_masked)
+                self.assertGreater(plate.disagreement, 0.5)
+            else:
+                plate.update(frame, mask)
+        error = _error(plate.canvas, session[-1][2])
+        self.assertLess((error > 25).mean(), 0.01)
+        self.assertAlmostEqual(float(plate.gain.mean()), 1.0, delta=0.1)
+
+    def test_a_scene_that_really_changed_is_accepted_after_the_blind_frames(self) -> None:
+        session = synthetic_session(frames=20)
+        plate = CleanPlate(session[0][2], CleanPlateConfig(dilate_px=6))
+        changed = session[-1][2].copy()
+        changed[:, :int(changed.shape[1] * 0.7)] = PALETTE[0]
+        for _ in range(BLIND_FRAMES + plate.config.persist_frames + 1):
+            plate.update(changed, None)
+        self.assertLess(_error(plate.canvas, changed).mean(), 3.0)
 
 
 if __name__ == "__main__":

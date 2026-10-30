@@ -81,6 +81,36 @@ def resting_hand_session(
     return session
 
 
+def shadow_session(
+    frames: int = 90, *, size: tuple[int, int] = (320, 240), shadow: tuple[int, int] = (10, 50),
+    share: float = 0.6, darkness: float = 0.6, seed: int = 3,
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """The painter's shadow (not in the mask) lies over most of the canvas for a while.
+
+    The hand rests at the right edge throughout and the "phone" jitters its exposure every
+    frame, so the exposure has to be measured on a canvas that is mostly in shadow. Returns
+    (frame, occluder mask, ground-truth canvas, shadow area) per frame.
+    """
+    rng = np.random.default_rng(seed)
+    width, height = size
+    yy, xx = np.mgrid[0:height, 0:width]
+    truth = np.full((height, width, 3), 228.0, np.float32)
+    truth[40:70, 40:120] = PALETTE[0]
+    truth[150:180, 180:280] = PALETTE[2]
+    hand = (xx - width + 10) ** 2 + (yy - height / 2) ** 2 < 20 ** 2
+    session = []
+    for t in range(frames):
+        frame = truth.copy()
+        shadowed = np.zeros((height, width), dtype=bool)
+        if shadow[0] <= t < shadow[1]:
+            shadowed[:, :int(width * share)] = True
+            frame[shadowed] *= darkness
+        frame[hand] = SKIN
+        frame = np.clip(frame * rng.uniform(0.93, 1.07), 0, 255).astype(np.uint8)
+        session.append((frame, hand, truth.astype(np.uint8), shadowed))
+    return session
+
+
 def painted_hand_session(
     frames: int = 90, *, size: tuple[int, int] = (320, 240)
 ) -> tuple[list[tuple[np.ndarray, dict[str, Blob], np.ndarray]], np.ndarray]:
