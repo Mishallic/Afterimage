@@ -152,6 +152,8 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 - A lamp reflected off wet paint is in the footage, so it is in the output until the paint
   dries. Put the lamp high and to the side, where the phone screen shows no hot spot.
 - Thin brushes under motion blur can slip past the masks; persistence and the critic are the net.
+- A wash close to the canvas colour (a pale pink ground over white) sits under the change
+  threshold and registers late, or only where it is strongest, until stronger paint arrives.
 - In open-weight mode the critic's box is followed within its 30-minute stretch of the session
   (the tracker works in chunks); a leftover that outlasts the stretch is caught again by the
   next round, not carried over.
