@@ -159,14 +159,17 @@ Removing the painter statistically goes back to Clady (SIGGRAPH 2006 poster) and
 stroke-layer decomposition. Loomis Painter (2025) uses a masked median per 10-second segment
 to build a training set and reports that it cannot handle hand shadows. Whiteboard cameras
 (MSR 2004, Kaptivo, Microsoft Teams, Logitech Scribe) remove the presenter from a whiteboard
-with real pixels. Generative erasers (Runway, Kling, Veo) regenerate the scene and invent
-strokes. No shipped tool does this for physical painting video. What's new here is the
+with real pixels. Repentir (Manchester Metropolitan University) recognises a finished painting
+in a photo and overlays photos taken while it was being made, which is the pixel receipt's
+question asked the other way round. Generative erasers (Runway, Kling, Veo) regenerate the
+scene and invent strokes. No shipped tool does this for physical painting video. What's new here is the
 combination: open-vocabulary SAM 3.1 masks chosen by Spark, a clean plate that dates every
 pixel and can revoke changes, a critic loop that re-prompts SAM, a held-out evaluation against
 the standard baselines, and a receipt you can re-derive.
 
 ## Built during the hackathon
 
-All code was written from Oct 26, 2026. The first nine commits were pushed together on
-Oct 27 from a day of local work; everything after is committed as it was built.
-Solo entry by Mishal (Mishallic). Model responses are cached under `out/` and are not committed.
+All code was written from Oct 26, 2026. The first nine commits were made together on
+Oct 27 from a day of local work; everything after is committed as it was built, and the
+repository went public on Oct 30 with that local history intact. Solo entry by Mishal
+(Mishallic). Model responses are cached under `out/` and are not committed.
