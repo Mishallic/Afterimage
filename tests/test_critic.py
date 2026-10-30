@@ -71,7 +71,9 @@ class CriticLoopTest(unittest.TestCase):
 
         asked = mock.Mock(side_effect=lambda api, pairs: answers.pop(0))
         tracker = mock.AsyncMock(side_effect=tracked)
+        self.checked = mock.Mock(side_effect=lambda api, crop, kind: {"present": True, "confidence": 0.9, "what_is_in_the_box": kind})
         self.addCleanup(mock.patch.stopall)
+        mock.patch.object(spark, "check_answer", self.checked).start()
         mock.patch.object(pipeline, "_sam_objects", sam_objects).start()
         mock.patch.object(pipeline, "_tracked_objects", tracker).start()
         mock.patch.object(spark, "client").start()
@@ -121,9 +123,11 @@ class CriticLoopTest(unittest.TestCase):
         self.assertLess(self.error(final, self.ring), 20)
         self.assertEqual(asked.call_count, 2)
 
+        checked = self.checked.call_count
         verdict = pipeline.verify(out / "receipt.json", self.video)
         self.assertTrue(verdict.ok, verdict.checks)
         self.assertEqual(asked.call_count, 2, "verify must not ask Spark again")
+        self.assertEqual(self.checked.call_count, checked, "nor re-check")
 
     def test_a_shadow_is_held_rather_than_tracked(self) -> None:
         answers = [{"defects": [{"image": 0, "box": SHADOW_BOX, "kind": "shadow", "confidence": 0.8}]}, {"defects": []}]
@@ -170,6 +174,26 @@ class CriticLoopTest(unittest.TestCase):
         self.assertEqual(asked.call_count, 1)
         self.assertEqual(rebuilt.call_count, 1, "the plate is built once; nothing new to mask means no rebuild")
         self.assertEqual([stream["concept"] for stream in receipt["sam_streams"]], ["person", "hand", "paintbrush", "critic1"])
+
+
+    def test_an_object_spark_does_not_confirm_on_the_reconstruction_is_dropped(self) -> None:
+        def answer(api, pairs):
+            return {"defects": [{"image": 0, "box": HAND_BOX, "kind": "hand", "confidence": 0.9},
+                                {"image": 0, "box": [600, 600, 900, 900], "kind": "brush", "confidence": 0.9}]}
+
+        asked, tracker = self.mocks([])
+        asked.side_effect = answer
+        self.checked.side_effect = lambda api, crop, kind: {
+            "present": kind == "hand", "confidence": 0.9, "what_is_in_the_box": "a hand" if kind == "hand" else "paint",
+        }
+        receipt, out, _ = self.run_session("unconfirmed", pipeline.Params(**{**self.params.to_dict(), "critic_rounds": 1}))
+        first = receipt["critic"]["rounds"][0]
+        self.assertEqual(first["unconfirmed"], 1)
+        self.assertEqual([defect["kind"] for defect in first["defects"]], ["hand"])
+        self.assertEqual(first["tracked"], 1)
+        self.assertEqual(self.checked.call_count, 2)
+        self.assertEqual([check["present"] for check in first["checks"]], [True, False])
+        self.assertTrue((out / first["checks"][1]["file"]).exists())
 
 
 class ArrivalFrameTest(unittest.TestCase):

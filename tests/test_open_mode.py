@@ -99,12 +99,16 @@ class OpenModeTest(unittest.TestCase):
         asked = mock.patch.object(spark, "critic_answer", mock.Mock(side_effect=[
             {"defects": [{"image": i, "box": HAND_BOX, "kind": "hand", "confidence": 0.9} for i in range(6)]},
         ])).start()
+        checked = mock.patch.object(spark, "check_answer", mock.Mock(
+            return_value={"present": True, "confidence": 0.9, "what_is_in_the_box": "a hand"},
+        )).start()
         mock.patch.object(spark, "client").start()
         mock.patch.dict(os.environ, {"SPARK_PROVIDER": "baseten", "BASETEN_API_KEY": "bt-test"}).start()
         params = Params(**{**self.params.to_dict(), "critic_rounds": 1})
         receipt, out, final = self.run_session("open-critic", params)
 
         asked.assert_called_once()
+        self.assertEqual(checked.call_count, len(receipt["critic"]["rounds"][0]["keyframes"]), "one check per reported object")
         boxed.assert_called_once()
         self.assertTrue(receipt["sam_streams"][-1]["file"].endswith("critic-1.npz"))
         self.assertEqual(receipt["critic"]["rounds"][0]["tracked"], len(receipt["critic"]["rounds"][0]["keyframes"]))

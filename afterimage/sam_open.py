@@ -7,6 +7,8 @@ run and hashed into the receipt, so verify re-derives everything without a GPU.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -81,7 +83,10 @@ def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames:
         file=proxy.name, sha256=ledger.file_sha256(proxy), frames=frames, prompts=prompts,
     ) as logged:
         started = time.monotonic()
-        data = _result(proxy, prompts, out.with_suffix(".call"))
+        # Named by the prompts as well: after a code change the same round can ask different boxes,
+        # and resuming the earlier call would hand back masks for the old ones.
+        tag = hashlib.sha256(json.dumps(prompts, sort_keys=True).encode()).hexdigest()[:8]
+        data = _result(proxy, prompts, out.with_name(f"{out.stem}-{tag}.call"))
         seconds = time.monotonic() - started
         logged["seconds"] = round(seconds, 1)
         logged["est_cost_usd"] = round(seconds / 3600 * GPU_USD_PER_HOUR, 4)

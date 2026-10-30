@@ -87,6 +87,17 @@ CRITIC_SCHEMA = {
     },
 }
 
+CHECK_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["what_is_in_the_box", "present", "confidence"],
+    "properties": {
+        "what_is_in_the_box": {"type": "string"},
+        "present": {"type": "boolean"},
+        "confidence": {"type": "number"},
+    },
+}
+
 CHAPTERS_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -124,9 +135,16 @@ Each image shows the camera frame on the LEFT and our reconstruction of the pain
 The reconstruction must contain only paint: no part of a person, hand, arm, brush or tool, and no
 shadow, glare or smear that isn't paint. For every leftover on the RIGHT half, report the image
 number, a box [x_min, y_min, x_max, y_max] on a 0-1000 grid relative to the RIGHT half only, what
-it is, and your confidence from 0 to 1. Things genuinely painted on the canvas (including painted
+it is, and your confidence from 0 to 1. Compare the two halves: a leftover is something on the
+RIGHT that the LEFT does not show at the same place. Anything present in both halves is in the
+footage itself and is not a leftover. Things genuinely painted on the canvas (including painted
 hands or figures) are not leftovers. Don't miss small fragments like a brush tip. If an image is
 clean, report nothing for it."""
+
+CHECK_PROMPT = """This is a crop of a reconstruction of a painting in progress; the green box marks a spot.
+Is there a real {kind} inside the green box: a physical object in front of the canvas, not paint on
+it? Say what is inside the box in a few words, whether a real {kind} is present, and your confidence
+from 0 to 1."""
 
 CHAPTERS_PROMPT = """This timelapse shows one painting session from start to finish.
 Split it into 3 to 6 phases a painter would recognise (for example sketch, block-in, background,
@@ -442,6 +460,18 @@ def parse_critic(answer: dict, count: int, size: tuple[int, int]) -> list[Defect
             continue
         defects.append(Defect(int(image), to_pixels(box, size), str(item.get("kind", "other")), confidence))
     return defects
+
+
+def check_answer(api: OpenAI, crop: np.ndarray, kind: str) -> dict:
+    """Ask whether a reported object is really there, on a crop of the reconstruction alone; raw answer."""
+    content = [{"type": "input_text", "text": CHECK_PROMPT.format(kind=kind)}, image_block(crop)]
+    return ask_json(api, content, CHECK_SCHEMA, "leftover_check")
+
+
+def parse_check(answer: dict) -> bool:
+    """Whether the check confirmed the object."""
+    confidence = _number(answer.get("confidence"))
+    return bool(answer.get("present")) and confidence is not None and confidence >= 0.5
 
 
 def chapters(api: OpenAI, scan_video: Path, picks: list[int]) -> list[dict]:

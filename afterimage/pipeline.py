@@ -374,15 +374,15 @@ def critic_rounds(
             )
         else:
             keyframes = [int(index) for index in recorded[number - 1]["keyframes"]]
-        answer_file = out / "spark" / f"critic-{number}-{critic.answer_tag(keyframes)}.json"
+        answer_file = out / "spark" / f"critic-{number}-{critic.answer_tag(keyframes, spark.CRITIC_PROMPT)}.json"
+        shown = critic.pairs(
+            proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
+            fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
+        )
         if not answer_file.exists():
             if recorded is not None:
                 raise FileNotFoundError(str(answer_file))
             answer_file.parent.mkdir(parents=True, exist_ok=True)
-            shown = critic.pairs(
-                proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
-                fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
-            )
             for index, (camera, reconstruction) in enumerate(shown):
                 # What Spark saw, kept beside its answer for looking into a run (not part of the receipt).
                 media.write_image(
@@ -392,16 +392,42 @@ def critic_rounds(
             answer = spark.critic_answer(spark.client(), shown)
             answer_file.write_text(json.dumps(answer, indent=2), encoding="utf-8")
         answer = json.loads(answer_file.read_text(encoding="utf-8"))
-        defects = [
+        reported = [
             defect for defect in spark.parse_critic(answer, len(keyframes), geometry.size)
             if defect.confidence >= critic.MIN_CONFIDENCE
         ]
+        # Each reported object is checked on a crop of the reconstruction alone: shown the camera
+        # beside it, Spark Open boxed a brush tip that was only in the camera half.
+        defects, checks = [], []
+        for index, defect in enumerate(reported):
+            if not defect.is_object:
+                defects.append(defect)
+                continue
+            check_file = answer_file.with_name(f"{answer_file.stem}-check-{index}.json")
+            if not check_file.exists():
+                if recorded is not None:
+                    raise FileNotFoundError(str(check_file))
+                crop = critic.check_crop(defect, shown[defect.keyframe])
+                media.write_image(crop, check_file.with_suffix(".jpg"))
+                check = spark.check_answer(spark.client(), crop, defect.kind)
+                check_file.write_text(json.dumps(check, indent=2), encoding="utf-8")
+            present = spark.parse_check(json.loads(check_file.read_text(encoding="utf-8")))
+            checks.append({
+                "defect": index,
+                "file": check_file.relative_to(out).as_posix(),
+                "sha256": file_sha256(check_file),
+                "present": present,
+            })
+            if present:
+                defects.append(defect)
         entry = {
             "round": number,
             "keyframes": keyframes,
             "file": answer_file.relative_to(out).as_posix(),
             "sha256": file_sha256(answer_file),
             "defects": [asdict(defect) for defect in defects],
+            "checks": checks,
+            "unconfirmed": sum(not check["present"] for check in checks),
             "tracked": 0,
             "held": 0,
         }
@@ -654,6 +680,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
         streams += box_streams
         for entry in rounds:
             print(f"  critic round {entry['round']}: {len(entry['defects'])} leftover(s), "
+                  f"{entry.get('unconfirmed', 0)} report(s) not confirmed, "
                   f"{entry['tracked']} sent to SAM, {entry['held']} change(s) held")
     (out / "frames.json").write_text(json.dumps(cleaned.diagnostics(params.fps)), encoding="utf-8")
     moments = out / "moments.mp4"

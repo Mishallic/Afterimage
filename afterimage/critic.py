@@ -35,6 +35,10 @@ MAX_DISAGREEMENT = 0.1
 the canvas at all: the camera was bumped, picked up or blocked."""
 MAX_HOLD_SHARE = 0.25
 """A box over more of the canvas than this is too coarse to hold: it would take real paint with it."""
+CHECK_PAD = 1.0
+"""Context around a reported box in the crop Spark is asked to confirm, as a multiple of the box's size."""
+CHECK_SIZE = 512
+"""The crop is upscaled so its longer side is about this many pixels."""
 BRIGHTENING = {"glare": 1, "shadow": -1}
 """Which way a change must have gone to be held for these kinds: glare only brightens, a shadow
 only darkens. Any other change in the box is paint that happens to sit under the box."""
@@ -53,9 +57,10 @@ def last_clear(occlusion: list[float], disagreement: list[float] | None = None) 
     return int(found[-1]) if len(found) else len(occlusion) - 1
 
 
-def answer_tag(keyframes: list[int]) -> str:
-    """Names a critic answer by the keyframes it was about, so a stale answer is never reused."""
-    return hashlib.sha256(json.dumps([int(index) for index in keyframes]).encode()).hexdigest()[:8]
+def answer_tag(keyframes: list[int], prompt: str = "") -> str:
+    """Names a critic answer by the keyframes it was about and the question asked, so a stale
+    answer is never reused."""
+    return hashlib.sha256(json.dumps([[int(index) for index in keyframes], prompt]).encode()).hexdigest()[:8]
 
 
 def _luminance(rgb: np.ndarray) -> np.ndarray:
@@ -152,6 +157,29 @@ def arrival_frame(
         return keyframe
     arrived = int(np.median(kept.frame[latest])) + persist_frames // 2
     return int(min(max(arrived, 0), keyframe))
+
+
+def check_crop(defect: Defect, pair: tuple[np.ndarray, np.ndarray]) -> np.ndarray:
+    """The reconstruction around the defect's box, the box drawn in green, upscaled for Spark.
+
+    The check shows the reconstruction alone. Shown the camera beside it, Spark Open boxed a brush
+    tip that was in the camera half only; shown this crop by itself it said, twice, "painted
+    texture, no physical object".
+    """
+    _, reconstruction = pair
+    height, width = reconstruction.shape[:2]
+    left, top, right, bottom = defect.box
+    pad_x, pad_y = max(int((right - left) * CHECK_PAD), 16), max(int((bottom - top) * CHECK_PAD), 16)
+    y0, y1 = max(top - pad_y, 0), min(bottom + pad_y, height)
+    x0, x1 = max(left - pad_x, 0), min(right + pad_x, width)
+    part = reconstruction[y0:y1, x0:x1].copy()
+    l, t = max(left - x0, 0), max(top - y0, 0)
+    r, b = min(right - x0, part.shape[1]), min(bottom - y0, part.shape[0])
+    if r > l and b > t:
+        part[t:b, l:min(l + 3, r)] = part[t:b, max(r - 3, l):r] = (0, 255, 0)
+        part[t:min(t + 3, b), l:r] = part[max(b - 3, t):b, l:r] = (0, 255, 0)
+    scale = max(1, round(CHECK_SIZE / max(part.shape[:2])))
+    return np.repeat(np.repeat(part, scale, axis=0), scale, axis=1)
 
 
 def proxy_boxes(
