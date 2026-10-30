@@ -111,10 +111,7 @@ def heldout_report(
     seen: dict[int, list[np.ndarray]] = {start: [] for start in starts}
     recent: deque[np.ndarray] = deque(maxlen=segment)
     everything = np.ones((geometry.size[1], geometry.size[0]), dtype=bool)
-    stream = (
-        geometry.view(frame)
-        for frame in media.read_frames(video, fps=params.fps, size=geometry.frame_size, seconds=params.seconds)
-    )
+    stream = geometry.frames(video, params)
 
     def observed():
         for index, frame in enumerate(stream):

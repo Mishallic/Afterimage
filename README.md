@@ -51,7 +51,7 @@ footage ─┬─► proxy (1–2 fps) ─► Spark scan: what to track, where t
          │                        ▼
          │                      SAM 3.1: one mask stream per concept ──► painter masks
          │                                                                  │
-         └─► canvas view (homography from the corners) ─────────────────────┤
+         └─► canvas view (corners snapped to the canvas edges, ffmpeg warp) ─┤
                                                                             ▼
                       clean plate: a pixel changes only after its new value holds
                       for the persistence (8 s) while uncovered; every change is
@@ -71,9 +71,16 @@ The hard cases, and what handles them:
 - **A painted hand, or a portrait.** SAM finds painted hands too. Real ones reach in past the
   canvas edge, move, and belong to a body; painted ones sit inside the canvas, stay put and
   outlast any pose ([`nohands/occluders.py`](nohands/occluders.py)). Only the real ones are removed.
-- **Shadows, glare, exposure drift.** Each frame is exposure-matched to the canvas it can see.
-  A shadow that flickers never commits; one that holds still commits and is vetoed when it
-  lifts. A shadow that holds still *and never lifts* is the known limitation (below).
+- **Shadows, glare, exposure drift.** Each frame is exposure-matched against a fixed
+  reference (the bare canvas, or paint that has stood for five minutes), never against the
+  drifting plate itself, and the 80th percentile of the per-pixel ratios is taken so that a
+  shadow over part of the canvas doesn't read as a darker exposure. A shadow that flickers
+  never commits; one that holds still commits and is vetoed when it lifts. A shadow that holds
+  still *and never lifts* is the known limitation (below).
+- **Where the canvas is.** Spark's corners land within a few percent of the frame, which is an
+  easel clamp across the top of every output. [`nohands/corners.py`](nohands/corners.py) moves
+  each edge onto the strongest bright-to-dark step nearby with a robust line fit, on the
+  clearest of the first frames, and keeps Spark's quad if no clean edge is found.
 - **The first frame.** Each pixel starts from its first uncovered value that holds steady, so
   a painter in frame 0 doesn't linger, and a stroke made in the first seconds still arrives
   as new paint.
@@ -114,9 +121,12 @@ python scripts/nohands_eval.py data/session.mp4 --static 300-360
 python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners ...
 ```
 
-`--no-scan` skips the Spark scan; `--corners` given by hand always win. The results page is
-`out/<session>/index.html`; it runs from disk. The core is numpy plus ffmpeg pipes (no OpenCV),
-so it runs on Windows N editions too. Tests: `python -m unittest discover -s tests -t .`
+`--no-scan` skips the Spark scan; `--corners` given by hand always win and are never snapped;
+`--start 3` skips the seconds while the phone was being set down. The results page is
+`out/<session>/index.html`; it runs from disk. Next to it: `receipt.json`, `stats.json`,
+`frames.json` (per frame: share covered, mask stillness, disagreement with the plate, exposure
+gain) and the request ledger. The core is numpy plus ffmpeg pipes (no OpenCV), so it runs on
+Windows N editions too. Tests: `python -m unittest discover -s tests -t .`
 
 Open weights instead of the API (needs Hugging Face access to `facebook/sam3.1`, a Modal
 account and a Baseten key):
@@ -134,7 +144,11 @@ python scripts/nohands_run.py data/session.mp4 --masks open --corners ...       
 - A fixed camera is required. Handheld footage isn't supported.
 - A shadow that holds still for longer than the persistence and never lifts is kept as paint
   until the critic catches it. Side lighting avoids it; the capture notes say how.
-- The camera's colour is not the pigment's colour. Steady light; a grey card helps.
+- The camera's colour is not the pigment's colour. Steady light; a grey card helps. Lock the
+  phone's exposure and white balance: the pipeline undoes auto-exposure drift, but what it can't
+  see under the painter it can't correct.
+- A lamp reflected off wet paint is in the footage, so it is in the output until the paint
+  dries. Put the lamp high and to the side, where the phone screen shows no hot spot.
 - Thin brushes under motion blur can slip past the masks; persistence and the critic are the net.
 - Works for flat work under a fixed camera: paper, canvas, boards.
 

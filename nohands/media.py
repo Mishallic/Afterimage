@@ -12,6 +12,7 @@ from types import TracebackType
 import numpy as np
 
 from .config import find_tool
+from .geometry import order_corners
 
 
 @dataclass(frozen=True)
@@ -72,10 +73,30 @@ def _input_args(video: Path, seconds: float | None, start: float = 0.0) -> list[
     return args
 
 
-def _sampling_filter(fps: float, size: tuple[int, int]) -> str:
+def perspective_filter(corners: np.ndarray, source: tuple[int, int]) -> str:
+    """ffmpeg's perspective filter: the canvas quadrilateral (fractions of the frame) sent to the frame's corners.
+
+    ffmpeg resamples the full-resolution frame in C, well ahead of the numpy Warper, which stays
+    for masks and single frames.
+    """
+    points = order_corners(np.asarray(corners, dtype=np.float64) * np.asarray(source, dtype=np.float64))
+    top_left, top_right, bottom_right, bottom_left = points
+    values = ":".join(f"{value:.3f}" for value in (*top_left, *top_right, *bottom_left, *bottom_right))
+    return f"perspective={values}:sense=source:interpolation=linear"
+
+
+def _sampling_filter(
+    fps: float, size: tuple[int, int], corners: np.ndarray | None = None, source: tuple[int, int] | None = None,
+) -> str:
     # Every output uses the same fps filter, so frame i sits at time i / fps everywhere
     # and SAM's frame indices line up with the full-resolution frames.
-    return f"fps={fps},scale={size[0]}:{size[1]}:flags=area"
+    chain = [f"fps={fps}"]
+    if corners is not None:
+        if source is None:
+            raise ValueError("straightening needs the source frame size")
+        chain.append(perspective_filter(corners, source))
+    chain.append(f"scale={size[0]}:{size[1]}:flags=area")
+    return ",".join(chain)
 
 
 def make_proxy(
@@ -127,10 +148,15 @@ def _stream(args: list[str], size: tuple[int, int], label: str) -> Iterator[np.n
 
 def read_frames(
     video: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None, start: float = 0.0,
+    corners: np.ndarray | None = None, source: tuple[int, int] | None = None,
 ) -> Iterator[np.ndarray]:
-    """Decode RGB frames, sampled exactly like make_proxy."""
+    """Decode RGB frames, sampled exactly like make_proxy.
+
+    With `corners` (the canvas quadrilateral as fractions of the `source` frame size), each frame
+    is the straightened canvas at `size` instead of the camera frame.
+    """
     args = _input_args(video, seconds, start) + [
-        "-vf", _sampling_filter(fps, size), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+        "-vf", _sampling_filter(fps, size, corners, source), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
     ]
     return _stream(args, size, str(video))
 

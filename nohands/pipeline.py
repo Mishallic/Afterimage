@@ -13,6 +13,7 @@ import hashlib
 import json
 import platform
 import subprocess
+from collections.abc import Iterator
 from contextlib import ExitStack, closing
 from dataclasses import asdict, dataclass, field, fields, replace
 from itertools import islice
@@ -24,6 +25,7 @@ from . import critic, ledger, maskfile, media, sam, sam_open, spark
 from .autocut import auto_edl
 from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
 from .config import find_tool
+from .corners import snap_corners
 from .devmasks import MotionMasker
 from .geometry import Warper, canvas_size, order_corners, polygon_mask
 from .ledger import file_sha256
@@ -108,15 +110,32 @@ class Geometry:
     size: tuple[int, int]
     """Output size: the straightened canvas, or the camera frame if there are no corners."""
     warper: Warper | None
+    camera: tuple[int, int] = (0, 0)
+    """The footage's own frame size, which ffmpeg straightens from."""
+    corners: tuple[tuple[float, float], ...] | None = None
 
     @classmethod
     def of(cls, info: media.VideoInfo, params: Params) -> Geometry:
         frame_size = media.output_size(info, params.width)
+        camera = (info.width, info.height)
         if not params.corners:
-            return cls(frame_size, frame_size, None)
+            return cls(frame_size, frame_size, None, camera)
         corners = np.array(params.corners, dtype=np.float64) * frame_size
         size = canvas_size(corners, params.width, params.aspect)
-        return cls(frame_size, size, Warper.facing(corners, size, (frame_size[1], frame_size[0])))
+        warper = Warper.facing(corners, size, (frame_size[1], frame_size[0]))
+        return cls(frame_size, size, warper, camera, params.corners)
+
+    def frames(self, video: Path, params: Params) -> Iterator[np.ndarray]:
+        """The output view of the footage, frame by frame.
+
+        With corners, ffmpeg straightens the full-resolution frame itself: the same mapping the
+        Warper applies to masks, at a fraction of the cost per frame.
+        """
+        corners = None if self.warper is None else np.asarray(self.corners, dtype=np.float64)
+        return media.read_frames(
+            video, fps=params.fps, size=self.size, seconds=params.seconds, start=params.start,
+            corners=corners, source=self.camera,
+        )
 
     def view(self, frame: np.ndarray) -> np.ndarray:
         return self.warper.image(frame) if self.warper else frame
@@ -138,6 +157,20 @@ class Cleaned:
     """Share of the canvas covered, per update."""
     stillness: list[float] = field(default_factory=list)
     """Overlap (IoU) between each update's occluder and the previous one; 0 when either is empty."""
+    disagreement: list[float] = field(default_factory=list)
+    """Share of the uncovered canvas that differed from the plate, per update (see CleanPlate)."""
+    gains: list[list[float]] = field(default_factory=list)
+    """The exposure gain the plate measured, per update."""
+
+    def diagnostics(self, fps: float) -> dict:
+        """Per-frame numbers worth keeping next to the outputs, for looking into a run."""
+        return {
+            "fps": fps,
+            "occlusion": [round(value, 4) for value in self.occlusion],
+            "stillness": [round(value, 4) for value in self.stillness],
+            "disagreement": [round(value, 4) for value in self.disagreement],
+            "gain": [[round(value, 4) for value in gain] for gain in self.gains],
+        }
 
 
 def toolchain() -> dict:
@@ -260,6 +293,24 @@ def occluder_masks(
     return occluders(objects, keys, shape), sorted(keys)
 
 
+def snapped_corners(
+    video: Path, params: Params, info: media.VideoInfo, masks: dict[int, np.ndarray]
+) -> tuple[tuple[float, float], ...] | None:
+    """Spark's corners moved onto the canvas's edges, found in the clearest of the first frames."""
+    frame_size = media.output_size(info, params.width)
+    clearest = min(
+        range(START_SCAN_FRAMES),
+        key=lambda index: 0.0 if masks.get(index) is None else float(masks[index].mean()),
+    )
+    frame = next(iter(media.read_indices(video, [clearest], fps=params.fps, size=frame_size, start=params.start)), None)
+    if frame is None:
+        return None
+    snapped = snap_corners(frame, np.asarray(params.corners, dtype=np.float64) * frame_size)
+    if snapped is None:
+        return None
+    return tuple((round(float(x / frame_size[0]), 4), round(float(y / frame_size[1]), 4)) for x, y in snapped)
+
+
 def sam_occluders(
     video: Path, params: Params, info: media.VideoInfo, out: Path, *, box_streams: list[dict] = (),
 ) -> tuple[dict[int, np.ndarray], list[dict], list[str]]:
@@ -315,11 +366,12 @@ def critic_rounds(
     for number in range(1, total + 1):
         if recorded is None:
             keyframes = critic.pick_keyframes(
-                cleaned.occlusion, cleaned.stillness, cleaned.kept, params.persist_frames, params.fps
+                cleaned.occlusion, cleaned.stillness, cleaned.kept, params.persist_frames, params.fps,
+                disagreement=cleaned.disagreement,
             )
         else:
             keyframes = [int(index) for index in recorded[number - 1]["keyframes"]]
-        answer_file = out / "spark" / f"critic-{number}.json"
+        answer_file = out / "spark" / f"critic-{number}-{critic.answer_tag(keyframes)}.json"
         if not answer_file.exists():
             if recorded is not None:
                 raise FileNotFoundError(str(answer_file))
@@ -381,12 +433,7 @@ def clean(
     """
 
     def frames():
-        return (
-            geometry.view(frame)
-            for frame in media.read_frames(
-                video, fps=params.fps, size=geometry.frame_size, seconds=params.seconds, start=params.start
-            )
-        )
+        return geometry.frames(video, params)
 
     everything = np.ones((geometry.size[1], geometry.size[0]), dtype=bool)
     motion = MotionMasker() if params.masks == "motion" else None
@@ -406,6 +453,8 @@ def clean(
     plate = CleanPlate(start, CleanPlateConfig(dilate_px=params.dilate, persist_frames=params.persist_frames, record=True))
     occlusion: list[float] = []
     stillness: list[float] = []
+    disagreement: list[float] = []
+    gains: list[list[float]] = []
     previous: np.ndarray | None = None
     with ExitStack() as stack:
         raw = stack.enter_context(media.FrameWriter(raw_out, geometry.size, params.output_fps)) if raw_out else None
@@ -419,6 +468,8 @@ def clean(
             if index in hidden:
                 occluder = everything
             plate.update(frame, occluder)
+            disagreement.append(plate.disagreement)
+            gains.append([float(value) for value in plate.gain])
             occlusion.append(0.0 if occluder is None else float(occluder.mean()))
             if occluder is None or previous is None or not occluder.any() or not previous.any():
                 stillness.append(0.0)
@@ -430,7 +481,9 @@ def clean(
 
     timeline = plate.timeline()
     vetoed = timeline.transients(threshold=plate.config.change_threshold, window=params.revert_frames)
-    return Cleaned(start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion, stillness)
+    return Cleaned(
+        start, timeline, timeline.without(vetoed), int(vetoed.sum()), occlusion, stillness, disagreement, gains
+    )
 
 
 def replay(
@@ -492,6 +545,16 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
                       f"tracking {', '.join(params.concepts)}")
             objects, streams, proxy_size = sam_objects(video, params, info, out)
             masks, kept_as_painted = occluder_masks(objects, params, proxy_size)
+        if scan and scan.get("canvas_corners"):
+            # Spark's corners are a few percent off; the clean canvas edges in the footage say where exactly.
+            snapped = snapped_corners(video, params, info, masks)
+            scan["snapped_corners"] = snapped
+            if snapped:
+                params = replace(params, corners=snapped)
+                masks, kept_as_painted = occluder_masks(objects, params, proxy_size)
+                print("  canvas corners snapped to the canvas edges")
+            else:
+                print("  canvas corners kept as Spark gave them: no clean edge found near them")
         if kept_as_painted:
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
 
@@ -506,6 +569,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
         for entry in rounds:
             print(f"  critic round {entry['round']}: {len(entry['defects'])} leftover(s), "
                   f"{entry['tracked']} sent to SAM, {entry['held']} change(s) held")
+    (out / "frames.json").write_text(json.dumps(cleaned.diagnostics(params.fps)), encoding="utf-8")
     moments = out / "moments.mp4"
     if not moments.exists():
         media.make_moments(

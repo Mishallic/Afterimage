@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
 import numpy as np
 
+from nohands import media
 from nohands.geometry import Warper, corners_from_mask, homography, order_corners
 
 CANVAS = (400, 300)
@@ -45,6 +48,30 @@ class GeometryTest(unittest.TestCase):
     def test_order_corners(self) -> None:
         shuffled = TILTED[[2, 0, 3, 1]]
         np.testing.assert_allclose(order_corners(shuffled), TILTED)
+
+    def test_ffmpeg_straightens_the_footage_like_the_warper(self) -> None:
+        canvas = canvas_image()
+        view = camera_view(canvas)
+        with tempfile.TemporaryDirectory() as folder:
+            video = Path(folder) / "view.mp4"
+            with media.FrameWriter(video, VIEW, fps=2) as writer:
+                for _ in range(4):
+                    writer.write(view)
+            fractions = TILTED / np.array(VIEW, dtype=np.float64)
+            frames = list(media.read_frames(video, fps=2, size=CANVAS, corners=fractions, source=VIEW))
+        self.assertEqual(len(frames), 4)
+        self.assertEqual(frames[0].shape, (CANVAS[1], CANVAS[0], 3))
+        by_warper = Warper.facing(TILTED, CANVAS, (VIEW[1], VIEW[0])).image(view)
+        inner = (slice(10, -10), slice(10, -10))
+        self.assertLess(np.abs(frames[0].astype(np.int16) - by_warper.astype(np.int16))[inner].mean(), 4.0)
+        self.assertLess(np.abs(frames[0].astype(np.int16) - canvas.astype(np.int16))[inner].mean(), 5.0)
+        # Both put the green patch where the canvas has it: no disagreement about where the corners are.
+        for image in (frames[0], by_warper):
+            green = (image[..., 1] > 150) & (image[..., 2] < 90)
+            green[:5] = green[-5:] = green[:, :5] = green[:, -5:] = False  # resampling smears the border
+            rows, cols = np.nonzero(green)
+            self.assertLessEqual(abs(rows.min() - 60) + abs(rows.max() + 1 - 140), 4)
+            self.assertLessEqual(abs(cols.min() - 80) + abs(cols.max() + 1 - 200), 4)
 
 
 if __name__ == "__main__":

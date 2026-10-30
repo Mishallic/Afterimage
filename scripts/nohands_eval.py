@@ -43,8 +43,8 @@ def main() -> None:
     folder = ROOT / "out" / args.video.stem
     receipt = json.loads((folder / "receipt.json").read_text(encoding="utf-8"))
     params = Params.from_dict(receipt["params"])
-    if params.masks != "sam":
-        raise SystemExit("The evaluation needs a SAM run: it reuses that run's masks.")
+    if not params.tracked:
+        raise SystemExit("The evaluation needs a SAM run (--masks sam or open): it reuses that run's masks.")
     missing = [stream["file"] for stream in receipt["sam_streams"] if not (folder / stream["file"]).exists()]
     if missing:
         raise SystemExit(f"Cached SAM streams are missing ({', '.join(missing)}); re-run the session first.")
