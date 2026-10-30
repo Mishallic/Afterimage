@@ -146,5 +146,28 @@ class CriticLoopTest(unittest.TestCase):
         tracker.assert_not_called()
 
 
+    def test_nothing_found_in_the_boxes_means_no_rebuild_and_no_second_round(self) -> None:
+        answers = [{"defects": [{"image": 0, "box": HAND_BOX, "kind": "hand", "confidence": 0.9}]}]
+        asked, tracker = self.mocks(answers)
+
+        async def nothing(mode, proxy, proxy_size, boxes, events_file, frames, work, prefix):
+            events_file.write_text("tracked", encoding="utf-8")
+            return {}
+
+        tracker.side_effect = nothing
+        rebuilt = mock.patch.object(pipeline, "clean", wraps=pipeline.clean).start()
+        receipt, _, _ = self.run_session("empty", self.params)
+
+        rounds = receipt["critic"]["rounds"]
+        self.assertEqual(len(rounds), 1, "a round that changed nothing ends the loop")
+        self.assertEqual(rounds[0]["tracked"], 1)
+        self.assertEqual(rounds[0]["found"], 0)
+        self.assertEqual(rounds[0]["held"], 0)
+        tracker.assert_called_once()
+        self.assertEqual(asked.call_count, 1)
+        self.assertEqual(rebuilt.call_count, 1, "the plate is built once; nothing new to mask means no rebuild")
+        self.assertEqual([stream["concept"] for stream in receipt["sam_streams"]], ["person", "hand", "paintbrush", "critic1"])
+
+
 if __name__ == "__main__":
     unittest.main()
