@@ -125,11 +125,47 @@ def _canvas_to_proxy(
     return homography(rect, order_corners(np.asarray(corners, dtype=np.float64) * proxy_size))
 
 
+def latest_changes(kept: Timeline, box: tuple[int, int, int, int], before: int, size: tuple[int, int]) -> np.ndarray:
+    """Indices into `kept` of each pixel's latest change inside `box` that began at or before `before`."""
+    x, y = kept.pixel % size[0], kept.pixel // size[0]
+    left, top, right, bottom = box
+    inside = np.flatnonzero((x >= left) & (x < right) & (y >= top) & (y < bottom) & (kept.frame <= before))
+    if not len(inside):
+        return inside
+    inside = inside[np.lexsort((kept.frame[inside], kept.pixel[inside]))]
+    pixel = kept.pixel[inside]
+    return inside[np.r_[pixel[1:] != pixel[:-1], True]]
+
+
+def arrival_frame(
+    kept: Timeline, box: tuple[int, int, int, int], keyframe: int, size: tuple[int, int], *, persist_frames: int = 0
+) -> int:
+    """The frame to show SAM for a box Spark drew on the reconstruction at `keyframe`.
+
+    A change is recorded from the frame its new value first held still and committed
+    persist_frames later, so whatever put it there was in view for that whole stretch. The
+    typical arrival of the latest changes under the box, plus half the persistence, lands inside
+    it. The keyframe itself when nothing under the box ever changed.
+    """
+    latest = latest_changes(kept, box, keyframe, size)
+    if not len(latest):
+        return keyframe
+    arrived = int(np.median(kept.frame[latest])) + persist_frames // 2
+    return int(min(max(arrived, 0), keyframe))
+
+
 def proxy_boxes(
     defects: Iterable[Defect], keyframes: list[int], corners: tuple[tuple[float, float], ...] | None,
-    size: tuple[int, int], proxy_size: tuple[int, int],
+    size: tuple[int, int], proxy_size: tuple[int, int], *, kept: Timeline | None = None, persist_frames: int = 0,
 ) -> list[tuple[int, tuple[int, int, int, int]]]:
-    """Object defects as SAM box prompts: (session frame, box) in the proxy's camera-view pixels."""
+    """Object defects as SAM box prompts: (session frame, box) in the proxy's camera-view pixels.
+
+    Spark draws its box on the reconstruction at a clear keyframe, when the thing that left the
+    mark has usually gone; a prompt there would track the paint underneath (on the first real
+    session it tracked a painted blob for fifteen minutes). Given the change timeline, the
+    prompt goes to the frame the box's content arrived (arrival_frame), when the brush or hand
+    that made it was still in view.
+    """
     matrix = _canvas_to_proxy(corners, size, proxy_size)
     boxes = []
     for defect in defects:
@@ -140,8 +176,11 @@ def proxy_boxes(
         points = points[:, :2] / points[:, 2:3]
         x0, y0 = (max(int(v), 0) for v in np.floor(points.min(axis=0)))
         x1, y1 = (min(int(v), limit) for v, limit in zip(np.ceil(points.max(axis=0)), proxy_size))
+        frame = keyframes[defect.keyframe]
+        if kept is not None:
+            frame = arrival_frame(kept, defect.box, frame, size, persist_frames=persist_frames)
         if x1 > x0 and y1 > y0:
-            boxes.append((keyframes[defect.keyframe], (x0, y0, x1, y1)))
+            boxes.append((frame, (x0, y0, x1, y1)))
     return boxes[:MAX_OBJECTS_PER_CALL]
 
 
@@ -155,21 +194,15 @@ def holds(kept: Timeline, defects: Iterable[Defect], keyframes: list[int], size:
     all of it drops the paint.
     """
     drop = np.zeros(len(kept), dtype=bool)
-    x, y = kept.pixel % size[0], kept.pixel // size[0]
     for defect in defects:
         if defect.is_object:
             continue
         left, top, right, bottom = defect.box
         if (right - left) * (bottom - top) > MAX_HOLD_SHARE * size[0] * size[1]:
             continue
-        inside = np.flatnonzero(
-            (x >= left) & (x < right) & (y >= top) & (y < bottom) & (kept.frame <= keyframes[defect.keyframe])
-        )
-        if not len(inside):
+        latest = latest_changes(kept, defect.box, keyframes[defect.keyframe], size)
+        if not len(latest):
             continue
-        inside = inside[np.lexsort((kept.frame[inside], kept.pixel[inside]))]
-        pixel = kept.pixel[inside]
-        latest = inside[np.r_[pixel[1:] != pixel[:-1], True]]
         direction = BRIGHTENING.get(defect.kind, 0)
         if direction:
             went = _luminance(kept.after[latest]) - _luminance(kept.before[latest])

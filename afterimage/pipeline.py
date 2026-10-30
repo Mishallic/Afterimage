@@ -399,7 +399,10 @@ def critic_rounds(
             "tracked": 0,
             "held": 0,
         }
-        boxes = critic.proxy_boxes(defects, keyframes, params.corners, geometry.size, proxy_size)
+        boxes = critic.proxy_boxes(
+            defects, keyframes, params.corners, geometry.size, proxy_size,
+            kept=cleaned.kept, persist_frames=params.persist_frames,
+        )
         found: dict = {}
         if boxes:
             events_file = work / (f"critic-{number}.npz" if params.masks == "open" else f"critic-{number}.events.ndjson")

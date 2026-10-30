@@ -38,6 +38,9 @@ BOX_TRACKER = "sam3"
 (its weights are downloaded on first use), or "sam3.1", the one inside the loaded predictor, which has
 no standalone video loader (its init_state takes cached features from the demo model)."""
 BOX_MODEL = f"facebook/{BOX_TRACKER} tracker"
+MAX_GROWTH = 8
+"""A tracked mask over this many times its prompt box's area is the tracker drifting onto something
+else (tracked backwards past the moment a brush arrived, it latched onto the painter) and is dropped."""
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -215,7 +218,8 @@ class Tracker:
             box = torch.tensor([[left / width, top / height, right / width, bottom / height]], dtype=torch.float32)
             _, ids, _, masks = tracker.add_new_points_or_box(inference_state=state, frame_idx=at, obj_id=number, box=box)
             print(f"[{key}] prompt frame {at}: ids={list(ids)} px={[int((m > 0).sum()) for m in _numpy(masks)]}")
-            yielded, found, scores = 0, 0, []
+            yielded, found, oversized, scores = 0, 0, 0, []
+            limit = MAX_GROWTH * max((right - left) * (bottom - top), 1)
             for reverse in (False, True):
                 for frame_idx, obj_ids, _, video_masks, obj_scores in tracker.propagate_in_video(
                     state, start_frame_idx=at, max_frame_num_to_track=None, reverse=reverse, propagate_preflight=True,
@@ -227,12 +231,15 @@ class Tracker:
                         if index < len(flat_scores):
                             scores.append((float(flat_scores[index]), bool(mask.any())))
                         if mask.any():
+                            if int(mask.sum()) > limit:
+                                oversized += 1
+                                continue
                             found += 1
                             frame_masks.setdefault(first + int(frame_idx), {})[f"{key}:{int(object_id)}"] = mask
             present = sorted(score for score, has_mask in scores if has_mask)
             empty = sorted(score for score, has_mask in scores if not has_mask)
             summary = lambda values: f"{values[0]:.2f}..{values[-1]:.2f} (n={len(values)})" if values else "none"  # noqa: E731
-            print(f"[{key}] propagated {yielded} frames, {found} object-frames; "
+            print(f"[{key}] propagated {yielded} frames, {found} object-frames, {oversized} dropped as drift; "
                   f"scores with a mask {summary(present)}, without {summary(empty)}")
 
     def _tracker(self):

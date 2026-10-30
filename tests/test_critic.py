@@ -114,6 +114,9 @@ class CriticLoopTest(unittest.TestCase):
         self.assertEqual(rounds[0]["held"], 0)
         self.assertEqual(rounds[1]["defects"], [])
         tracker.assert_called_once()
+        prompts = [frame for frame, _ in tracker.call_args.args[3]]
+        self.assertTrue(all(frame <= REST[0] + 2 * self.params.persist_frames for frame in prompts),
+                        f"SAM is shown the hand arriving, not the end keyframe: {prompts}")
         self.assertEqual([stream["concept"] for stream in receipt["sam_streams"]], ["person", "hand", "paintbrush", "critic1"])
         self.assertLess(self.error(final, self.ring), 20)
         self.assertEqual(asked.call_count, 2)
@@ -167,6 +170,29 @@ class CriticLoopTest(unittest.TestCase):
         self.assertEqual(asked.call_count, 1)
         self.assertEqual(rebuilt.call_count, 1, "the plate is built once; nothing new to mask means no rebuild")
         self.assertEqual([stream["concept"] for stream in receipt["sam_streams"]], ["person", "hand", "paintbrush", "critic1"])
+
+
+class ArrivalFrameTest(unittest.TestCase):
+    def test_the_prompt_frame_is_when_the_box_content_arrived(self) -> None:
+        from afterimage import critic
+        from afterimage.timeline import Timeline
+
+        size = (100, 80)
+        rows = []
+        for y in range(10, 30):
+            for x in range(10, 30):  # under the box: first changed at 5, changed again at 30
+                rows += [(y * size[0] + x, 5), (y * size[0] + x, 30)]
+        for x in range(60, 70):  # elsewhere: changed at 50
+            rows.append((40 * size[0] + x, 50))
+        pixel = np.array([p for p, _ in rows], dtype=np.int32)
+        frame = np.array([f for _, f in rows], dtype=np.int32)
+        colours = np.zeros((len(rows), 3), dtype=np.uint8)
+        kept = Timeline.concat((size[1], size[0]), [(pixel, frame, colours, colours)])
+        box = (10, 10, 30, 30)
+        self.assertEqual(critic.arrival_frame(kept, box, 59, size, persist_frames=4), 32)
+        self.assertEqual(critic.arrival_frame(kept, box, 20, size, persist_frames=4), 7, "only changes begun by the keyframe")
+        self.assertEqual(critic.arrival_frame(kept, box, 31, size, persist_frames=4), 31, "never after the keyframe")
+        self.assertEqual(critic.arrival_frame(kept, (0, 0, 5, 5), 59, size), 59, "nothing under the box: the keyframe")
 
 
 if __name__ == "__main__":
