@@ -8,7 +8,8 @@ averaged over a few frames. No generative model touches the image. Nothing is in
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
 *Build for Your World*: I paint, and every process video I film is mostly my own elbow.
 Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
-weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. Built with Muse Spark Open.
+weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten, which is how every
+session here was processed.
 
 ## What it does
 
@@ -173,3 +174,5 @@ All code was written from Oct 26, 2026. The first nine commits were made togethe
 Oct 27 from a day of local work; everything after is committed as it was built, and the
 repository went public on Oct 30 with that local history intact. Solo entry by Mishal
 (Mishallic). Model responses are cached under `out/` and are not committed.
+
+Built with Muse Spark Open.
