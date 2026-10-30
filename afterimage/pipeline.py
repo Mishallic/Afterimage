@@ -383,6 +383,12 @@ def critic_rounds(
                 proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
                 fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
             )
+            for index, (camera, reconstruction) in enumerate(shown):
+                # What Spark saw, kept beside its answer for looking into a run (not part of the receipt).
+                media.write_image(
+                    np.concatenate([camera, reconstruction], axis=1),
+                    answer_file.with_name(f"{answer_file.stem}-{index}.jpg"),
+                )
             answer = spark.critic_answer(spark.client(), shown)
             answer_file.write_text(json.dumps(answer, indent=2), encoding="utf-8")
         answer = json.loads(answer_file.read_text(encoding="utf-8"))
