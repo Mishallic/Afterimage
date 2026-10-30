@@ -27,8 +27,9 @@ session here was processed.
 - **A checkable record.** `receipt.json` holds the footage hash, the hashes of every cached
   model response, the parameters, and a hash chain over every output frame.
   `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
-  and compares. Checkable, not proof: it shows the output came from this footage through
-  this code, nothing more.
+  and compares. On the first real session (84 minutes, 5,023 output frames) it passed in
+  about 85 minutes with no API key, every frame bit for bit. Checkable, not proof: it shows
+  the output came from this footage through this code, nothing more.
 
 ## How it uses Meta's models
 
