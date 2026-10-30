@@ -24,7 +24,6 @@ from meta_sam_parser import (
     parse_responses_stream,
     video_segmentation_format,
 )
-import httpx
 import openai
 from openai import AsyncOpenAI
 
@@ -46,7 +45,7 @@ STREAM_ATTEMPTS = 3
 def client() -> AsyncOpenAI:
     return AsyncOpenAI(
         base_url=META_BASE_URL, api_key=meta_api_key(),
-        timeout=httpx.Timeout(STREAM_READ_TIMEOUT, connect=60.0), max_retries=2,
+        timeout=STREAM_READ_TIMEOUT, max_retries=2,
     )
 
 
@@ -125,7 +124,7 @@ async def _segment(
             try:
                 await _record(api, file_id, prompt, direction, partial, purpose=purpose, frames=frames, attempt=attempt)
                 break
-            except (openai.APITimeoutError, openai.APIConnectionError, httpx.HTTPError, StreamIncomplete):
+            except (openai.APITimeoutError, openai.APIConnectionError, StreamIncomplete):
                 partial.unlink(missing_ok=True)
                 if attempt == STREAM_ATTEMPTS:
                     raise
@@ -147,8 +146,7 @@ async def _record(
         count = 0
         with partial.open("w", encoding="utf-8") as handle:
             async for event in _stream_events(api, file_id, prompt, direction):
-                handle.write(json.dumps(event) + "
-")
+                handle.write(json.dumps(event) + "\n")
                 count += 1
                 body = event.get("response")
                 if isinstance(body, dict):
