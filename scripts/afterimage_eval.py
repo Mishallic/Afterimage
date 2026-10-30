@@ -38,9 +38,12 @@ def main() -> None:
     parser.add_argument("--static", action="append", type=seconds, default=[], metavar="START-STOP",
                         help="a stretch with no painting, in seconds (repeatable)")
     parser.add_argument("--min-seconds", type=float, default=3.0, help="shortest clear stretch to use")
+    parser.add_argument("--run", type=Path, default=None,
+                        help="the finished run's folder (default: out/<video name>; a run made with --out lives elsewhere)")
     args = parser.parse_args()
 
-    folder = ROOT / "out" / args.video.stem
+    folder = args.run if args.run is not None else ROOT / "out" / args.video.stem
+    name = folder.name
     receipt = json.loads((folder / "receipt.json").read_text(encoding="utf-8"))
     params = Params.from_dict(receipt["params"])
     if not params.tracked:
@@ -68,13 +71,13 @@ def main() -> None:
 
     out = ROOT / "eval"
     out.mkdir(exist_ok=True)
-    (out / f"{args.video.stem}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
-    text = markdown(report, args.video.name)
+    (out / f"{name}.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    text = markdown(report, f"{args.video.name} ({name})" if name != args.video.stem else args.video.name)
     calls = report["meta_calls"]
     if calls:
         cost = sum(model["est_cost_usd"] for model in calls["by_model"].values())
         text += f"\nMeta calls for this run: {calls['calls']}, about ${cost:.2f} (see the run's ledger.jsonl).\n"
-    (out / f"{args.video.stem}.md").write_text(text, encoding="utf-8")
+    (out / f"{name}.md").write_text(text, encoding="utf-8")
     print(text)
 
 
