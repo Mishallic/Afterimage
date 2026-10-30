@@ -22,7 +22,7 @@ from afterimage.config import ROOT
 from afterimage.pipeline import Params, run
 
 
-def parse_args() -> tuple[Path, Params, str, bool]:
+def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
     defaults = Params()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("video", type=Path)
@@ -47,6 +47,7 @@ def parse_args() -> tuple[Path, Params, str, bool]:
     parser.add_argument("--output-fps", type=float, default=defaults.output_fps)
     parser.add_argument("--title", default="", help="name of the painting, for the match page")
     parser.add_argument("--no-reels", action="store_true", help="skip rendering the social reels")
+    parser.add_argument("--out", type=Path, help="output folder (default out/<video name>); caches live there too")
     args = parser.parse_args()
     params = Params(
         fps=args.fps,
@@ -64,13 +65,13 @@ def parse_args() -> tuple[Path, Params, str, bool]:
         scan=not args.no_scan,
         output_fps=args.output_fps,
     )
-    return args.video, params, args.title, not args.no_reels
+    return args.video, params, args.title, not args.no_reels, args.out
 
 
 def main() -> None:
-    video, params, title, reels = parse_args()
+    video, params, title, reels, out = parse_args()
     started = time.perf_counter()
-    out = ROOT / "out" / video.stem
+    out = out if out is not None else ROOT / "out" / video.stem
     receipt = run(video, out, params, title=title, reels=reels)
     print(f"{receipt['output']['frames']} frames, receipt {receipt['output']['canvas_sha256'][:16]}…")
     print(f"done in {time.perf_counter() - started:.0f}s -> {out / 'index.html'}")

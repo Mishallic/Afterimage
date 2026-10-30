@@ -123,7 +123,8 @@ python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners
 ```
 
 `--no-scan` skips the Spark scan; `--corners` given by hand always win and are never snapped;
-`--start 3` skips the seconds while the phone was being set down. The results page is
+`--start 3` skips the seconds while the phone was being set down; `--out <folder>` puts the
+outputs and caches somewhere other than `out/<session>`. The results page is
 `out/<session>/index.html`; it runs from disk. Next to it: `receipt.json`, `stats.json`,
 `frames.json` (per frame: share covered, mask stillness, disagreement with the plate, exposure
 gain) and the request ledger. The core is numpy plus ffmpeg pipes (no OpenCV), so it runs on
