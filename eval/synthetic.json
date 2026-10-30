@@ -1,7 +1,7 @@
 [
   {
     "scenario": "moving hand + shadow",
-    "method": "NoHands",
+    "method": "Afterimage",
     "mean_delta_e": 0.17,
     "final_delta_e": 0.01,
     "artifact_frames_pct": 0.0,
@@ -10,7 +10,7 @@
   },
   {
     "scenario": "moving hand + shadow",
-    "method": "NoHands without veto",
+    "method": "Afterimage without veto",
     "mean_delta_e": 0.21,
     "final_delta_e": 0.01,
     "artifact_frames_pct": 41.1,
@@ -37,7 +37,7 @@
   },
   {
     "scenario": "resting hand + static shadow",
-    "method": "NoHands",
+    "method": "Afterimage",
     "mean_delta_e": 0.0,
     "final_delta_e": 0.0,
     "artifact_frames_pct": 0.0,
@@ -46,7 +46,7 @@
   },
   {
     "scenario": "resting hand + static shadow",
-    "method": "NoHands without veto",
+    "method": "Afterimage without veto",
     "mean_delta_e": 0.22,
     "final_delta_e": 0.0,
     "artifact_frames_pct": 66.7,
@@ -73,7 +73,7 @@
   },
   {
     "scenario": "painted hand on canvas",
-    "method": "NoHands",
+    "method": "Afterimage",
     "mean_delta_e": 0.01,
     "final_delta_e": 0.0,
     "artifact_frames_pct": 0.0,
@@ -82,7 +82,7 @@
   },
   {
     "scenario": "painted hand on canvas",
-    "method": "NoHands without veto",
+    "method": "Afterimage without veto",
     "mean_delta_e": 0.03,
     "final_delta_e": 0.0,
     "artifact_frames_pct": 37.8,

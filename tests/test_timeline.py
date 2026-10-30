@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from nohands.cleanplate import CleanPlate, CleanPlateConfig
-from nohands.timeline import Timeline
+from afterimage.cleanplate import CleanPlate, CleanPlateConfig
+from afterimage.timeline import Timeline
 from tests.synthetic import resting_hand_session, synthetic_session
 
 REST = (20, 50)

@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from nohands.evaluate import delta_e2000, masked_median, psnr, srgb_to_lab, temporal_median
+from afterimage.evaluate import delta_e2000, masked_median, psnr, srgb_to_lab, temporal_median
 
 
 class ColourTest(unittest.TestCase):

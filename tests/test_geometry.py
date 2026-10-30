@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from nohands import media
-from nohands.geometry import Warper, corners_from_mask, homography, order_corners
+from afterimage import media
+from afterimage.geometry import Warper, corners_from_mask, homography, order_corners
 
 CANVAS = (400, 300)
 VIEW = (640, 480)

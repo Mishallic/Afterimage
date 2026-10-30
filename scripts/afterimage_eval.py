@@ -1,7 +1,7 @@
 """Score a processed session on the frames where the painter stepped back, next to the baselines.
 
-    python scripts/nohands_eval.py data/session.mp4
-    python scripts/nohands_eval.py data/session.mp4 --holdout 600-612 --holdout 1210-1225 --static 300-360
+    python scripts/afterimage_eval.py data/session.mp4
+    python scripts/afterimage_eval.py data/session.mp4 --holdout 600-612 --holdout 1210-1225 --static 300-360
 
 Needs a finished SAM run in out/<video name>/ (its receipt.json and cached SAM streams), so it
 makes no API calls. Held-out stretches have nobody over the canvas: found in the masks unless
@@ -19,10 +19,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nohands import media
-from nohands.config import ROOT
-from nohands.heldout import heldout_report, markdown
-from nohands.pipeline import Params, sam_occluders
+from afterimage import media
+from afterimage.config import ROOT
+from afterimage.heldout import heldout_report, markdown
+from afterimage.pipeline import Params, sam_occluders
 
 
 def seconds(text: str) -> tuple[float, float]:

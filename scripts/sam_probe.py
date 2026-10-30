@@ -18,8 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from nohands import media, sam
-from nohands.config import ROOT
+from afterimage import media, sam
+from afterimage.config import ROOT
 
 
 def parse_args() -> argparse.Namespace:

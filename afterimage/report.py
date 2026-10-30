@@ -16,7 +16,7 @@ TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · NoHands</title>
+<title>__TITLE__ · Afterimage</title>
 <style>
   :root { --bg: #0b0d12; --panel: #151922; --line: #262c38; --text: #eef1f6; --muted: #8a93a6; --gold: #f2c14e; }
   * { box-sizing: border-box; }
@@ -48,7 +48,7 @@ TEMPLATE = """<!doctype html>
 </head>
 <body>
 <main>
-  <header><h1>__TITLE__</h1><p>Made by hand. Shown without them. Every pixel is copied from a real frame: aligned and colour-matched, never invented.</p></header>
+  <header><h1>__TITLE__</h1><p>Made by hand. The painting stays. Every pixel is copied from a real frame: aligned and colour-matched, never invented.</p></header>
   <section class="grid" id="tiles"></section>
 
   <section class="panel">
@@ -80,7 +80,7 @@ TEMPLATE = """<!doctype html>
 
   <section class="panel two">
     <div><h2>Reel</h2><video src="reel.mp4" controls playsinline></video></div>
-    <div><h2>Camera vs NoHands</h2><video src="compare.mp4" controls playsinline></video></div>
+    <div><h2>Camera vs Afterimage</h2><video src="compare.mp4" controls playsinline></video></div>
   </section>
 
   <section class="panel">
@@ -88,7 +88,7 @@ TEMPLATE = """<!doctype html>
     <p class="hint">Every frame above can be re-derived from the raw footage and the cached SAM 3.1 masks.
       No step in the pipeline generates pixels.</p>
     <p id="chain"></p>
-    <p class="hint"><code>python scripts/nohands_verify.py receipt.json --video &lt;raw footage&gt;</code> · <a href="receipt.json" style="color: var(--gold)">receipt.json</a></p>
+    <p class="hint"><code>python scripts/afterimage_verify.py receipt.json --video &lt;raw footage&gt;</code> · <a href="receipt.json" style="color: var(--gold)">receipt.json</a></p>
   </section>
 
   <section class="panel"><h2>Share</h2><button id="download">Download card</button></section>
@@ -162,7 +162,7 @@ document.getElementById("download").onclick = () => {
   const g = c.getContext("2d");
   g.fillStyle = "#0b0d12"; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = "#eef1f6"; g.font = "900 64px system-ui, sans-serif"; g.fillText(document.title.split(" · ")[0], 70, 130);
-  g.fillStyle = "#8a93a6"; g.font = "600 30px system-ui, sans-serif"; g.fillText("Made by hand. Shown without them.", 72, 180);
+  g.fillStyle = "#8a93a6"; g.font = "600 30px system-ui, sans-serif"; g.fillText("Made by hand. The painting stays.", 72, 180);
   const img = new Image();
   img.onload = () => {
     const box = { x: 70, y: 230, w: 940, h: 760 };
@@ -173,8 +173,8 @@ document.getElementById("download").onclick = () => {
       g.fillStyle = "#8a93a6"; g.font = "700 24px system-ui, sans-serif"; g.fillText(k.toUpperCase(), x, y);
       g.fillStyle = "#eef1f6"; g.font = "800 40px system-ui, sans-serif"; g.fillText(String(v), x, y + 46);
     });
-    g.fillStyle = "#f2c14e"; g.font = "700 26px system-ui, sans-serif"; g.fillText("No AI-generated pixels · NoHands", 70, 1310);
-    const a = document.createElement("a"); a.download = "nohands-card.png"; a.href = c.toDataURL("image/png"); a.click();
+    g.fillStyle = "#f2c14e"; g.font = "700 26px system-ui, sans-serif"; g.fillText("No AI-generated pixels · Afterimage", 70, 1310);
+    const a = document.createElement("a"); a.download = "afterimage-card.png"; a.href = c.toDataURL("image/png"); a.click();
   };
   img.src = images.final;
 };

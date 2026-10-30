@@ -6,7 +6,7 @@ One-time setup (needs a Hugging Face account with access to facebook/sam3.1 gran
     modal secret create huggingface HF_TOKEN=hf_...
     modal deploy scripts/sam_modal.py
 
-Then `--masks open` in scripts/nohands_run.py uses it. To try it on a clip by hand:
+Then `--masks open` in scripts/afterimage_run.py uses it. To try it on a clip by hand:
 
     modal run scripts/sam_modal.py --video data/session.mp4 --concepts hand,person --seconds 30
 
@@ -25,7 +25,7 @@ from pathlib import Path
 
 import modal
 
-APP = "nohands-sam"
+APP = "afterimage-sam"
 VERSION = "sam3.1"
 CHUNK_FRAMES = 1800
 """Frames per tracking session: a 30-minute stretch at 1 fps fits a 24 GB card with the video on the CPU."""
@@ -49,7 +49,7 @@ image = (
     .env({"HF_HUB_ENABLE_HF_TRANSFER": "0", "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"})
 )
 app = modal.App(APP)
-weights = modal.Volume.from_name("nohands-hf-cache", create_if_missing=True)
+weights = modal.Volume.from_name("afterimage-hf-cache", create_if_missing=True)
 
 
 def _numpy(value):
@@ -59,7 +59,7 @@ def _numpy(value):
 
 
 def _blobs(frame_masks: dict) -> bytes:
-    """Packed like nohands.maskfile, written out here so the container doesn't need the repo."""
+    """Packed like afterimage.maskfile, written out here so the container doesn't need the repo."""
     import json
 
     import numpy as np
@@ -246,8 +246,8 @@ def main(
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     import numpy as np
 
-    from nohands import maskfile, media
-    from nohands.config import ROOT
+    from afterimage import maskfile, media
+    from afterimage.config import ROOT
 
     concept = [c.strip() for c in concepts.split(",") if c.strip()]
     source = Path(video)

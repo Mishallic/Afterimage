@@ -9,10 +9,10 @@ from unittest import mock
 
 import numpy as np
 
-from nohands import heldout, media, pipeline
-from nohands.heldout import METHODS, clear_windows, false_commit_rate, heldout_report, markdown
-from nohands.pipeline import Params
-from nohands.timeline import Timeline
+from afterimage import heldout, media, pipeline
+from afterimage.heldout import METHODS, clear_windows, false_commit_rate, heldout_report, markdown
+from afterimage.pipeline import Params
+from afterimage.timeline import Timeline
 from tests.synthetic import synthetic_session
 
 SIZE = (320, 240)
@@ -77,9 +77,9 @@ class HeldOutTest(unittest.TestCase):
         self.assertEqual(windows, [(18.5, 22.5), (36.5, 39.5)])
         self.assertEqual(self.report["rejected"], [])
 
-    def test_nohands_rebuilds_the_hidden_frames_better_than_the_baselines(self) -> None:
+    def test_afterimage_rebuilds_the_hidden_frames_better_than_the_baselines(self) -> None:
         summary = self.report["summary"]
-        ours = summary["NoHands"]
+        ours = summary["Afterimage"]
         self.assertLess(ours["clearly_off_pct"], 0.5)
         for baseline in ("masked median (Loomis-style)", "temporal median (no masks)"):
             self.assertLess(ours["delta_e"], summary[baseline]["delta_e"], baseline)
@@ -111,8 +111,8 @@ class HiddenMeansUnseenTest(unittest.TestCase):
             with mock.patch.object(heldout, "clean", peeking):
                 peeked = heldout_report(video, params, masks, windows=windows)
         # The stroke covers 5.2% of the frame.
-        self.assertGreater(hidden["summary"]["NoHands"]["clearly_off_pct"], 4.0)
-        self.assertLess(peeked["summary"]["NoHands"]["clearly_off_pct"], 1.0)
+        self.assertGreater(hidden["summary"]["Afterimage"]["clearly_off_pct"], 4.0)
+        self.assertLess(peeked["summary"]["Afterimage"]["clearly_off_pct"], 1.0)
 
 
 if __name__ == "__main__":

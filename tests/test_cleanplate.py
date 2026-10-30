@@ -6,7 +6,7 @@ import unittest
 
 import numpy as np
 
-from nohands.cleanplate import BLIND_FRAMES, CleanPlate, CleanPlateConfig, first_visible_canvas, visible_mask
+from afterimage.cleanplate import BLIND_FRAMES, CleanPlate, CleanPlateConfig, first_visible_canvas, visible_mask
 from tests.synthetic import PALETTE, SKIN, shadow_session, synthetic_session
 
 

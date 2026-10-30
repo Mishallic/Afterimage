@@ -23,7 +23,7 @@ MODEL = "muse-voice-transcribe-1.0"
 
 def multipart(fields: list[tuple[str, str | None, str, bytes]]) -> tuple[bytes, str]:
     """Encode (name, filename, content type, data) parts as multipart/form-data."""
-    boundary = f"nohands-{uuid.uuid4().hex}"
+    boundary = f"afterimage-{uuid.uuid4().hex}"
     body = bytearray()
     for name, filename, content_type, data in fields:
         disposition = f'form-data; name="{name}"' + (f'; filename="{filename}"' if filename else "")
@@ -45,7 +45,7 @@ def transcribe(
         ("audio", wav.name, "audio/wav", wav.read_bytes()),
     ])
     request = urllib.request.Request(
-        f"{URL}?sessionId=nohands-{uuid.uuid4().hex}",
+        f"{URL}?sessionId=afterimage-{uuid.uuid4().hex}",
         data=body,
         headers={
             "Authorization": f"Bearer {meta_api_key()}",

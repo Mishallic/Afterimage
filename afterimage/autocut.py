@@ -51,6 +51,6 @@ def auto_edl(stats: dict, *, layout: str = "vertical", fps: float = 30.0) -> Edi
     reveal = Clip("freeze", last, frames, 2.2, captions=[Caption("NO AI-GENERATED PIXELS.", 0.3)])
     end_card = Clip("freeze", last, frames, 3.2, dim=0.6, captions=[
         Caption("MADE BY HAND.\nSHOWN WITHOUT THEM.", 0.15, style="card"),
-        Caption(f"{clock(stats['duration_s'])} of painting · every pixel from a real frame · NoHands", 0.15, style="title"),
+        Caption(f"{clock(stats['duration_s'])} of painting · every pixel from a real frame · Afterimage", 0.15, style="title"),
     ])
     return EditDecisionList([opener, story, reveal, end_card], layout=layout, fps=fps)

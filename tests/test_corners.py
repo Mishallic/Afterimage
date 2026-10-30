@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from nohands.corners import snap_corners
-from nohands.geometry import polygon_mask
+from afterimage.corners import snap_corners
+from afterimage.geometry import polygon_mask
 
 VIEW = (640, 480)
 WALL = (150, 140, 125)

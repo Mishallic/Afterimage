@@ -91,7 +91,7 @@ def masked_median(
     """One clean frame per segment: the median of each pixel's uncovered samples in it.
 
     Pixels covered for the whole segment keep the previous segment's value. This is the
-    Loomis Painter approach (10-second segments), given the same masks NoHands gets.
+    Loomis Painter approach (10-second segments), given the same masks Afterimage gets.
     Streams: only one segment of frames is held at a time.
     """
     previous: np.ndarray | None = None

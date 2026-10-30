@@ -1,9 +1,9 @@
-"""The NoHands pipeline, and the receipt that makes its output checkable.
+"""The Afterimage pipeline, and the receipt that makes its output checkable.
 
 masks → clean plate (pass 1, recording every change) → transient veto → replay (pass 2) → outputs.
 Every step is deterministic given the source footage, the cached SAM 3.1 mask streams and the
 parameters, and none of them generates pixels. So anyone holding those three can re-derive every
-output frame and compare it with the receipt: `scripts/nohands_verify.py`.
+output frame and compare it with the receipt: `scripts/afterimage_verify.py`.
 """
 
 from __future__ import annotations
@@ -598,7 +598,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     }
     receipt = {
         "version": RECEIPT_VERSION,
-        "tool": "nohands",
+        "tool": "afterimage",
         "models": models,
         "source": {
             "file": video.name,

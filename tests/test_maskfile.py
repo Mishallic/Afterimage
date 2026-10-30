@@ -7,8 +7,8 @@ import unittest
 
 import numpy as np
 
-from nohands import maskfile
-from nohands.masks import Blob
+from afterimage import maskfile
+from afterimage.masks import Blob
 from tests.synthetic import painted_hand_session
 
 

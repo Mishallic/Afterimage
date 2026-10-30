@@ -14,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from nohands import ledger, media, pipeline, sam, spark, voice
+from afterimage import ledger, media, pipeline, sam, spark, voice
 
 SCAN_ANSWER = {
     "occluders": [

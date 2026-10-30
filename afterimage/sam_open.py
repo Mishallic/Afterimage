@@ -13,7 +13,7 @@ from pathlib import Path
 from . import ledger, maskfile
 from .occluders import Objects
 
-APP = "nohands-sam"
+APP = "afterimage-sam"
 CLASS = "Tracker"
 FUNCTION = "track"
 MODEL = "facebook/sam3.1 (open weights, Modal)"

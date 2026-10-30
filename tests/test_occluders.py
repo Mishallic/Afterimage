@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from nohands.cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
-from nohands.occluders import occluders, painted
+from afterimage.cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
+from afterimage.occluders import occluders, painted
 from tests.synthetic import SKIN, painted_hand_session
 
 FPS = 2.0

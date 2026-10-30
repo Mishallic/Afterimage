@@ -8,11 +8,11 @@ from pathlib import Path
 
 import numpy as np
 
-from nohands import media
-from nohands.cameo import render_cameo
-from nohands.geometry import Warper, homography, polygon_mask
-from nohands.masks import dilate
-from nohands.receipt import receipt, time_map
+from afterimage import media
+from afterimage.cameo import render_cameo
+from afterimage.geometry import Warper, homography, polygon_mask
+from afterimage.masks import dilate
+from afterimage.receipt import receipt, time_map
 from tests.synthetic import synthetic_session
 
 ROOM = (640, 360)

@@ -1,6 +1,6 @@
-"""Check a NoHands output against its footage: re-derive every frame and compare with the receipt.
+"""Check a Afterimage output against its footage: re-derive every frame and compare with the receipt.
 
-    python scripts/nohands_verify.py out/session/receipt.json --video data/session.mp4
+    python scripts/afterimage_verify.py out/session/receipt.json --video data/session.mp4
 
 Needs the raw footage and the SAM 3.1 mask streams cached next to the receipt; no API key.
 Exit code 0 means every output frame was re-derived from that footage, bit for bit.
@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nohands.pipeline import verify
+from afterimage.pipeline import verify
 
 
 def main() -> None:

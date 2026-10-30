@@ -26,7 +26,7 @@ CLEARLY_DIFFERENT = 5.0
 """ΔE00 above which two colours look clearly different side by side."""
 STILL_LEVELS = 6.0
 """Most pixels of a held-out window must vary less than this (0-255), or something moved in it."""
-METHODS = ("NoHands", "masked median (Loomis-style)", "temporal median (no masks)")
+METHODS = ("Afterimage", "masked median (Loomis-style)", "temporal median (no masks)")
 
 
 def clear_windows(occlusion: list[float], *, min_frames: int, trim: int = 1) -> list[tuple[int, int]]:
@@ -106,7 +106,7 @@ def heldout_report(
     outputs: dict[str, dict[int, np.ndarray]] = {method: {} for method in METHODS}
     for index, (canvas, _) in enumerate(cleaned.kept.replay(cleaned.start, len(cleaned.occlusion))):
         if index in starts:
-            outputs["NoHands"][index] = canvas.copy()
+            outputs["Afterimage"][index] = canvas.copy()
 
     seen: dict[int, list[np.ndarray]] = {start: [] for start in starts}
     recent: deque[np.ndarray] = deque(maxlen=segment)

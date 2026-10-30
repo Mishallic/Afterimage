@@ -16,13 +16,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import numpy as np
 
-from nohands.cameo import render_cameo
+from afterimage.cameo import render_cameo
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("clip", type=Path, help="you sitting next to the canvas")
-    parser.add_argument("timelapse", type=Path, help="timelapse.mp4 from nohands_run.py")
+    parser.add_argument("timelapse", type=Path, help="timelapse.mp4 from afterimage_run.py")
     parser.add_argument("--corners", nargs=4, metavar="X,Y", required=True,
                         help="canvas corners in the clip, as fractions of the frame")
     parser.add_argument("--seconds", type=float, default=8.0)

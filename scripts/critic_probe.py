@@ -21,9 +21,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nohands import critic, ledger, media, spark
-from nohands.config import ROOT
-from nohands.pipeline import Geometry, Params, _proxy, _sam_work, clean, occluder_masks, sam_objects
+from afterimage import critic, ledger, media, spark
+from afterimage.config import ROOT
+from afterimage.pipeline import Geometry, Params, _proxy, _sam_work, clean, occluder_masks, sam_objects
 
 BATCH = 6
 MIN_COVER, MAX_COVER = 0.02, 0.3

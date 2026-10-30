@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from nohands import media
-from nohands.autocut import auto_edl
-from nohands.cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
-from nohands.render import Sources, render
-from nohands.stats import PIGMENTS, StatsTracker
+from afterimage import media
+from afterimage.autocut import auto_edl
+from afterimage.cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
+from afterimage.render import Sources, render
+from afterimage.stats import PIGMENTS, StatsTracker
 from tests.synthetic import synthetic_session
 
 FPS = 2.0

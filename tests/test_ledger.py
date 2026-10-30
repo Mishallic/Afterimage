@@ -15,8 +15,8 @@ from unittest import mock
 
 import numpy as np
 
-from nohands import ledger, sam, spark, voice
-from nohands.config import SAM_MODEL, SPARK_MODEL
+from afterimage import ledger, sam, spark, voice
+from afterimage.config import SAM_MODEL, SPARK_MODEL
 
 
 class _Event:

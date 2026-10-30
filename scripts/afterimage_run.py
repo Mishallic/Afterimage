@@ -1,12 +1,12 @@
-"""Run the whole NoHands pipeline on one session video.
+"""Run the whole Afterimage pipeline on one session video.
 
-    python scripts/nohands_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96 --aspect 1.5
-    python scripts/nohands_run.py data/synthetic.mp4 --masks motion --fps 2 --width 640
+    python scripts/afterimage_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96 --aspect 1.5
+    python scripts/afterimage_run.py data/synthetic.mp4 --masks motion --fps 2 --width 640
 
 Corners are fractions of the camera frame (top-left, top-right, bottom-right, bottom-left).
 Without --corners, Spark's scan finds them; scripts/first_frame.py helps read them off by hand. Outputs land in out/<video name>/: timelapse.mp4,
 raw.mp4, compare.mp4, reel.mp4, reel-landscape.mp4, stats.json, receipt.json and index.html.
-Check any output against its footage with scripts/nohands_verify.py.
+Check any output against its footage with scripts/afterimage_verify.py.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nohands.config import ROOT
-from nohands.pipeline import Params, run
+from afterimage.config import ROOT
+from afterimage.pipeline import Params, run
 
 
 def parse_args() -> tuple[Path, Params, str, bool]:

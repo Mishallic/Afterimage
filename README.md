@@ -1,6 +1,6 @@
-# NoHands
+# Afterimage
 
-**Film yourself painting. NoHands gets you out of the way, and the painting shows itself.**
+**Film yourself painting. Afterimage takes the painter out of the footage, and the painting stays.**
 
 Every pixel in the output is derived only from camera frames: aligned, colour-matched and
 averaged over a few frames. No generative model touches the image. Nothing is invented.
@@ -25,7 +25,7 @@ weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. Built with 
 - **Ghost slider.** Fade the painter back in from 0% to 100%.
 - **A checkable record.** `receipt.json` holds the footage hash, the hashes of every cached
   model response, the parameters, and a hash chain over every output frame.
-  `scripts/nohands_verify.py` re-derives the whole output from the footage and the caches
+  `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
   and compares. Checkable, not proof: it shows the output came from this footage through
   this code, nothing more.
 
@@ -33,13 +33,13 @@ weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. Built with 
 
 | Model | Where | Job |
 |---|---|---|
-| **SAM 3.1** (`sam-3.1`) | [`nohands/sam.py`](nohands/sam.py) | Tracks every concept Spark asks for (`person`, `hand`, `paintbrush`, plus what Spark adds) through the whole session at 1–2 fps, one streaming call per concept, event streams cached and hashed. Follows the critic's boxes through the video as box prompts. |
-| **Muse Spark 1.3** (`muse-spark-1.3`), scan | [`nohands/spark.py`](nohands/spark.py), [`nohands/pipeline.py`](nohands/pipeline.py) `spark_scan` | Watches a 48 s digest of the session and decides what else SAM should track (a rag, a cup, a cat), with a strict kind enum, and finds the canvas corners. Each extra concept is a SAM pass over the whole session, so Spark chooses which ones are worth it. |
-| **Muse Spark 1.3**, critic | [`nohands/critic.py`](nohands/critic.py), `pipeline.critic_rounds` | After the clean plate has run, Spark sees (camera \| reconstruction) pairs at the moments most likely to have gone wrong and boxes anything that isn't paint. Objects go back to SAM as box prompts; shadows, glare and smears are held, which drops the change that put them there. At most two rounds; every decision cached and recorded, so verify replays it without asking. |
-| **Open-weight mode** | [`scripts/sam_modal.py`](scripts/sam_modal.py), [`nohands/sam_open.py`](nohands/sam_open.py), `SPARK_PROVIDER=baseten` | The same pipeline with the weights instead of the API: `facebook/sam3.1` runs on a Modal GPU (text prompts for the concepts, box prompts for the critic's finds, masks returned as a hashed file), and Muse Spark Open answers through Baseten's endpoint, with the schema enforced as a forced tool call and the digest sent as frames. The receipt names which path was used. |
+| **SAM 3.1** (`sam-3.1`) | [`afterimage/sam.py`](afterimage/sam.py) | Tracks every concept Spark asks for (`person`, `hand`, `paintbrush`, plus what Spark adds) through the whole session at 1–2 fps, one streaming call per concept, event streams cached and hashed. Follows the critic's boxes through the video as box prompts. |
+| **Muse Spark 1.3** (`muse-spark-1.3`), scan | [`afterimage/spark.py`](afterimage/spark.py), [`afterimage/pipeline.py`](afterimage/pipeline.py) `spark_scan` | Watches a 48 s digest of the session and decides what else SAM should track (a rag, a cup, a cat), with a strict kind enum, and finds the canvas corners. Each extra concept is a SAM pass over the whole session, so Spark chooses which ones are worth it. |
+| **Muse Spark 1.3**, critic | [`afterimage/critic.py`](afterimage/critic.py), `pipeline.critic_rounds` | After the clean plate has run, Spark sees (camera \| reconstruction) pairs at the moments most likely to have gone wrong and boxes anything that isn't paint. Objects go back to SAM as box prompts; shadows, glare and smears are held, which drops the change that put them there. At most two rounds; every decision cached and recorded, so verify replays it without asking. |
+| **Open-weight mode** | [`scripts/sam_modal.py`](scripts/sam_modal.py), [`afterimage/sam_open.py`](afterimage/sam_open.py), `SPARK_PROVIDER=baseten` | The same pipeline with the weights instead of the API: `facebook/sam3.1` runs on a Modal GPU (text prompts for the concepts, box prompts for the critic's finds, masks returned as a hashed file), and Muse Spark Open answers through Baseten's endpoint, with the schema enforced as a forced tool call and the digest sent as frames. The receipt names which path was used. |
 | **Muse Image** | not used | Would contradict the promise. |
 
-Every call goes through [`nohands/ledger.py`](nohands/ledger.py): model, endpoint, purpose,
+Every call goes through [`afterimage/ledger.py`](afterimage/ledger.py): model, endpoint, purpose,
 prompt, response id, usage, time and estimated cost, appended to the run's `ledger.jsonl`.
 Media is logged by SHA-256 only; the API key is scrubbed; the ledger's hash is in the receipt.
 
@@ -70,7 +70,7 @@ The hard cases, and what handles them:
   slips, and the critic covers what both miss.
 - **A painted hand, or a portrait.** SAM finds painted hands too. Real ones reach in past the
   canvas edge, move, and belong to a body; painted ones sit inside the canvas, stay put and
-  outlast any pose ([`nohands/occluders.py`](nohands/occluders.py)). Only the real ones are removed.
+  outlast any pose ([`afterimage/occluders.py`](afterimage/occluders.py)). Only the real ones are removed.
 - **Shadows, glare, exposure drift.** Each frame is exposure-matched against a fixed
   reference (the bare canvas, or paint that has stood for five minutes), never against the
   drifting plate itself, and the 80th percentile of the per-pixel ratios is taken so that a
@@ -78,7 +78,7 @@ The hard cases, and what handles them:
   never commits; one that holds still commits and is vetoed when it lifts. A shadow that holds
   still *and never lifts* is the known limitation (below).
 - **Where the canvas is.** Spark's corners land within a few percent of the frame, which is an
-  easel clamp across the top of every output. [`nohands/corners.py`](nohands/corners.py) moves
+  easel clamp across the top of every output. [`afterimage/corners.py`](afterimage/corners.py) moves
   each edge onto the strongest bright-to-dark step nearby with a robust line fit, on the
   clearest of the first frames, and keeps Spark's quad if no clean edge is found.
 - **The first frame.** Each pixel starts from its first uncovered value that holds steady, so
@@ -91,19 +91,19 @@ Everything below was measured on synthetic scenes that were written alongside th
 They show the method does what it was designed to do; they are not a stand-in for footage.
 Real-session numbers land here as soon as sessions have been processed.
 
-Three scenes, three methods ([`eval/synthetic.md`](eval/synthetic.md), `scripts/nohands_bench.py`):
+Three scenes, three methods ([`eval/synthetic.md`](eval/synthetic.md), `scripts/afterimage_bench.py`):
 
-| Scene | NoHands | Masked median (Loomis-style) | Temporal median (no masks) |
+| Scene | Afterimage | Masked median (Loomis-style) | Temporal median (no masks) |
 |---|---|---|---|
 | Moving hand + shadow: frames with a visible leftover | **0.0%** | 47.8% | 92.2% |
 | Resting hand + still shadow: frames with a visible leftover | **0.0%** | 55.6% | 93.3% |
 | Painted hand: frames with a visible leftover | **0.0%** | 27.8% | 83.3% |
 
-The step-back protocol ([`nohands/heldout.py`](nohands/heldout.py), `scripts/nohands_eval.py`)
+The step-back protocol ([`afterimage/heldout.py`](afterimage/heldout.py), `scripts/afterimage_eval.py`)
 hides the frames where nobody is over the canvas from every method, rebuilds, and scores
 against what the camera saw there. A test shows hidden means unseen: a stroke first uncovered
 inside a hidden window is missed (5.5% of pixels off) and caught when the method is allowed
-to peek (0.3%). On the synthetic session: NoHands ΔE00 0.27, 0.35% of pixels clearly off,
+to peek (0.3%). On the synthetic session: Afterimage ΔE00 0.27, 0.35% of pixels clearly off,
 PSNR 39.6; masked median 0.74 / 1.14% / 28.4; temporal median 1.15 / 2.08% / 25.4.
 
 The critic is measured with `scripts/critic_probe.py`: hand crops cut from the footage with
@@ -115,9 +115,9 @@ reported. The loop's plumbing is covered by tests with SAM and Spark played by m
 ```
 python -m venv .venv && .venv\Scripts\pip install -r requirements.txt   # ffmpeg on PATH
 copy .env.example .env                                                   # MODEL_API_KEY=...
-python scripts/nohands_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96
-python scripts/nohands_verify.py out/session/receipt.json --video data/session.mp4
-python scripts/nohands_eval.py data/session.mp4 --static 300-360
+python scripts/afterimage_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96
+python scripts/afterimage_verify.py out/session/receipt.json --video data/session.mp4
+python scripts/afterimage_eval.py data/session.mp4 --static 300-360
 python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners ...
 ```
 
@@ -136,7 +136,7 @@ modal setup
 modal secret create huggingface HF_TOKEN=hf_...
 modal deploy scripts/sam_modal.py
 modal run scripts/sam_modal.py --video data/session.mp4 --concepts hand,person --seconds 30   # overlay check
-python scripts/nohands_run.py data/session.mp4 --masks open --corners ...              # SPARK_PROVIDER=baseten in .env
+python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...              # SPARK_PROVIDER=baseten in .env
 ```
 
 ## Limitations

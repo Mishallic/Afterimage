@@ -15,9 +15,9 @@ from unittest import mock
 
 import numpy as np
 
-from nohands import maskfile, media, pipeline, sam_open, spark
-from nohands.masks import Blob, dilate
-from nohands.pipeline import Params
+from afterimage import maskfile, media, pipeline, sam_open, spark
+from afterimage.masks import Blob, dilate
+from afterimage.pipeline import Params
 from tests.synthetic import resting_hand_session
 
 SIZE = (320, 240)

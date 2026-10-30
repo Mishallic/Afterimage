@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nohands import ledger, media, spark
-from nohands.config import ROOT, spark_provider
+from afterimage import ledger, media, spark
+from afterimage.config import ROOT, spark_provider
 
 SCHEMA = {
     "type": "object",

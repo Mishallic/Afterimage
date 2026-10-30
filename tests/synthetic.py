@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from nohands.masks import Blob
+from afterimage.masks import Blob
 
 SKIN = (200, 160, 130)
 WALL = (90, 92, 104)

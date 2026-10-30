@@ -9,8 +9,8 @@ from pathlib import Path
 
 import numpy as np
 
-from nohands import media
-from nohands.pipeline import Params, run, verify
+from afterimage import media
+from afterimage.pipeline import Params, run, verify
 from tests.synthetic import synthetic_session
 
 SIZE = (320, 240)
