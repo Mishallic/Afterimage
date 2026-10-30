@@ -36,8 +36,8 @@ session here was processed.
 |---|---|---|
 | **SAM 3.1** (`sam-3.1`) | [`afterimage/sam.py`](afterimage/sam.py) | Tracks every concept Spark asks for (`person`, `hand`, `paintbrush`, plus what Spark adds) through the whole session at 1–2 fps, one streaming call per concept, event streams cached and hashed. Follows the critic's boxes through the video as box prompts. |
 | **Muse Spark 1.3** (`muse-spark-1.3`), scan | [`afterimage/spark.py`](afterimage/spark.py), [`afterimage/pipeline.py`](afterimage/pipeline.py) `spark_scan` | Watches a 48 s digest of the session and decides what else SAM should track (a rag, a cup, a cat), with a strict kind enum, and finds the canvas corners. Each extra concept is a SAM pass over the whole session, so Spark chooses which ones are worth it. |
-| **Muse Spark 1.3**, critic | [`afterimage/critic.py`](afterimage/critic.py), `pipeline.critic_rounds` | After the clean plate has run, Spark sees (camera \| reconstruction) pairs at the moments most likely to have gone wrong and boxes anything that isn't paint. Objects go back to SAM as box prompts; shadows, glare and smears are held, which drops the change that put them there. At most two rounds; every decision cached and recorded, so verify replays it without asking. |
-| **Open-weight mode** | [`scripts/sam_modal.py`](scripts/sam_modal.py), [`afterimage/sam_open.py`](afterimage/sam_open.py), `SPARK_PROVIDER=baseten` | The same pipeline with the weights instead of the API: `facebook/sam3.1` runs on a Modal GPU (text prompts for the concepts, box prompts for the critic's finds, masks returned as a hashed file), and Muse Spark Open answers through Baseten's endpoint, with the schema enforced as a forced tool call and the digest sent as frames. The receipt names which path was used. |
+| **Muse Spark 1.3**, critic | [`afterimage/critic.py`](afterimage/critic.py), `pipeline.critic_rounds` | After the clean plate has run, Spark sees (camera \| reconstruction) pairs at the moments most likely to have gone wrong and boxes anything that isn't paint. Objects go back to SAM as box prompts, shown at the frame the box's content arrived (the change timeline knows), when the brush or hand that left it was still in view; shadows, glare and smears are held, which drops the change that put them there. At most two rounds, and a round that changes nothing ends the loop; every decision cached and recorded, so verify replays it without asking. |
+| **Open-weight mode** | [`scripts/sam_modal.py`](scripts/sam_modal.py), [`afterimage/sam_open.py`](afterimage/sam_open.py), `SPARK_PROVIDER=baseten` | The same pipeline with the weights instead of the API: `facebook/sam3.1` runs on a Modal GPU (text prompts for the concepts; the critic's boxes go to the SAM 2-style tracker SAM 3 ships, since SAM 3's own box prompt means "more things like this" rather than "this thing"; masks returned as a hashed file that names the tracker), and Muse Spark Open answers through Baseten's endpoint, with the schema enforced as a forced tool call and the digest sent as frames. The receipt names which path was used. |
 | **Muse Image** | not used | Would contradict the promise. |
 
 Every call goes through [`afterimage/ledger.py`](afterimage/ledger.py): model, endpoint, purpose,
@@ -152,6 +152,9 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 - A lamp reflected off wet paint is in the footage, so it is in the output until the paint
   dries. Put the lamp high and to the side, where the phone screen shows no hot spot.
 - Thin brushes under motion blur can slip past the masks; persistence and the critic are the net.
+- In open-weight mode the critic's box is followed within its 30-minute stretch of the session
+  (the tracker works in chunks); a leftover that outlasts the stretch is caught again by the
+  next round, not carried over.
 - Works for flat work under a fixed camera: paper, canvas, boards.
 
 ## Prior work
