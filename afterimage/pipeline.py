@@ -558,7 +558,7 @@ def clean(
     )
 
 
-CLEAN_CACHE_VERSION = 1
+CLEAN_CACHE_VERSION = 2
 
 
 def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict]) -> str:
