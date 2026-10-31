@@ -3,7 +3,7 @@
 After the clean plate has run, Spark sees (camera | reconstruction) pairs at the moments most
 likely to have gone wrong and boxes anything on the reconstruction that isn't paint. Objects
 go back to SAM as box prompts and become occluders wherever they appear; shadows, glare and
-smears are held, which drops the change that put them there. Every decision is cached and
+shadows and glare are held, which drops the change that put them there (smears are only recorded). Every decision is cached and
 recorded, so a verify run replays it without asking again.
 """
 
@@ -219,11 +219,14 @@ def holds(kept: Timeline, defects: Iterable[Defect], keyframes: list[int], size:
     would have: glare brightens and a shadow darkens, so a change the other way is paint that
     happens to sit under the box. Boxes over more than MAX_HOLD_SHARE of the canvas are left
     alone: Spark boxes a whole shiny wet passage as glare, and dropping the last change under
-    all of it drops the paint.
+    all of it drops the paint. Smears and "other" have no such test, so they are recorded and
+    left alone: on the first real session Spark Open called the painter's palette, seen in the
+    camera half, a smear and then "other" on the reconstruction, and holding every change in
+    those boxes cut two rectangles of older paint into the painting.
     """
     drop = np.zeros(len(kept), dtype=bool)
     for defect in defects:
-        if defect.is_object:
+        if defect.is_object or defect.kind not in BRIGHTENING:
             continue
         left, top, right, bottom = defect.box
         if (right - left) * (bottom - top) > MAX_HOLD_SHARE * size[0] * size[1]:

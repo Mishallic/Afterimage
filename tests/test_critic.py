@@ -196,6 +196,17 @@ class CriticLoopTest(unittest.TestCase):
         self.assertTrue((out / first["checks"][1]["file"]).exists())
 
 
+    def test_a_smear_is_recorded_but_nothing_is_held(self) -> None:
+        answers = [{"defects": [{"image": 0, "box": SHADOW_BOX, "kind": "smear", "confidence": 0.9}]}]
+        asked, tracker = self.mocks(answers)
+        receipt, _, _ = self.run_session("smear", self.params)
+        rounds = receipt["critic"]["rounds"]
+        self.assertEqual(len(rounds), 1, "nothing changed, so no second round")
+        self.assertEqual([defect["kind"] for defect in rounds[0]["defects"]], ["smear"])
+        self.assertEqual(rounds[0]["held"], 0)
+        tracker.assert_not_called()
+
+
 class ArrivalFrameTest(unittest.TestCase):
     def test_the_prompt_frame_is_when_the_box_content_arrived(self) -> None:
         from afterimage import critic
