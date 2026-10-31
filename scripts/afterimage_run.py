@@ -45,6 +45,8 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
     parser.add_argument("--revert-window", type=float, default=defaults.revert_window,
                         help="seconds within which an undone change counts as transient")
     parser.add_argument("--output-fps", type=float, default=defaults.output_fps)
+    parser.add_argument("--exposure", choices=["wall", "canvas", "off"], default="wall",
+                        help="where exposure drift is measured: the room around the canvas (default), the canvas, or not at all")
     parser.add_argument("--title", default="", help="name of the painting, for the match page")
     parser.add_argument("--no-reels", action="store_true", help="skip rendering the social reels")
     parser.add_argument("--out", type=Path, help="output folder (default out/<video name>); caches live there too")
@@ -64,6 +66,7 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
         masks=args.masks,
         scan=not args.no_scan,
         output_fps=args.output_fps,
+        exposure=args.exposure,
     )
     return args.video, params, args.title, not args.no_reels, args.out
 

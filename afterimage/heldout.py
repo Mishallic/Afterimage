@@ -75,7 +75,7 @@ def _scores(output: np.ndarray, truth: np.ndarray) -> dict:
 def heldout_report(
     video: Path, params: Params, masks: dict[int, np.ndarray] | None, *,
     windows: list[tuple[int, int]] | None = None, static: list[tuple[int, int]] = (),
-    min_seconds: float = 3.0, segment_seconds: float = 10.0,
+    min_seconds: float = 3.0, segment_seconds: float = 10.0, exposure: list[list[float]] | None = None,
 ) -> dict:
     """Rebuild the session with its clear windows hidden, and score every method on them.
 
@@ -97,7 +97,7 @@ def heldout_report(
         windows = clear_windows(occlusion, min_frames=max(1, round(min_seconds * params.fps)))
     windows = [(start, stop) for start, stop in windows if start >= segment]
     hidden = frozenset(index for start, stop in windows for index in range(start, stop))
-    cleaned = clean(video, params, geometry, masks, raw_out=None, hidden=hidden)
+    cleaned = clean(video, params, geometry, masks, raw_out=None, hidden=hidden, exposure=exposure)
     frame_count = len(cleaned.occlusion)
     windows = [(start, min(stop, frame_count)) for start, stop in windows if start < frame_count]
     starts = {start for start, _ in windows}

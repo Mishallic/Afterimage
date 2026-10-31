@@ -23,7 +23,7 @@ import numpy as np
 
 from . import critic, ledger, maskfile, media, sam, sam_open, spark
 from .autocut import auto_edl
-from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas
+from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas, surround_gains
 from .config import find_tool
 from .corners import snap_corners
 from .devmasks import MotionMasker
@@ -77,6 +77,10 @@ class Params:
         return self.masks in ("sam", "open")
     scan: bool = True
     """With SAM masks: Spark watches the session first, adds what else to track and finds the canvas."""
+    exposure: str = "canvas"
+    """Where exposure drift is measured: "wall" (the room around the canvas, where paint never
+    lands; needs corners and masks), "canvas" (the bare canvas, then settled paint) or "off".
+    Receipts from before the option was added re-derive with "canvas"; new runs default to "wall"."""
     critic_rounds: int = 2
     """With SAM masks: how many times Spark may inspect the result and have SAM fix what it finds."""
     output_fps: float = 30.0
@@ -200,6 +204,20 @@ def _proxy(video: Path, params: Params, proxy_size: tuple[int, int], work: Path)
         media.make_proxy(video, proxy, fps=params.fps, size=proxy_size, seconds=params.seconds, start=params.start)
     info = media.probe(proxy)
     return proxy, round(info.duration * info.fps)
+
+
+def surround_exposure(
+    video: Path, params: Params, proxy_size: tuple[int, int] | None, masks: dict[int, np.ndarray] | None, out: Path,
+) -> list[list[float]] | None:
+    """Per-frame exposure measured on the room around the canvas, in the low-res copy SAM sees.
+
+    None unless params.exposure is "wall" and the canvas corners and the painter's masks are known.
+    """
+    if params.exposure != "wall" or not params.corners or masks is None or proxy_size is None:
+        return None
+    proxy, _ = _proxy(video, params, proxy_size, _sam_work(out, params, proxy_size))
+    canvas = polygon_mask(np.array(params.corners, dtype=np.float64) * proxy_size, (proxy_size[1], proxy_size[0]))
+    return surround_gains(media.read_frames(proxy, fps=params.fps, size=proxy_size), canvas, masks.get)
 
 
 def spark_scan(video: Path, params: Params, info: media.VideoInfo, out: Path) -> tuple[Params, dict]:
@@ -370,7 +388,7 @@ async def _tracked_objects(
 def critic_rounds(
     video: Path, params: Params, geometry: Geometry, out: Path, objects: Objects,
     proxy_size: tuple[int, int], cleaned: Cleaned, *, recorded: list[dict] | None = None,
-    cache_streams: list[dict] | None = None,
+    cache_streams: list[dict] | None = None, exposure: list[list[float]] | None = None,
 ) -> tuple[Cleaned, list[dict], list[dict]]:
     """Spark inspects the reconstruction and SAM fixes what it finds, up to params.critic_rounds times.
 
@@ -477,9 +495,10 @@ def critic_rounds(
                 # Nothing tracked means nothing new to mask; the rebuild would repeat the last one.
                 masks, _ = occluder_masks(objects, params, proxy_size)
                 if cache_streams is None:
-                    cleaned = clean(video, params, geometry, masks, raw_out=None)
+                    cleaned = clean(video, params, geometry, masks, raw_out=None, exposure=exposure)
                 else:
-                    cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None)
+                    cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None,
+                                           exposure=exposure)
         held = critic.holds(cleaned.kept, defects, keyframes, geometry.size)
         if held.any():
             cleaned = replace(cleaned, kept=cleaned.kept.without(held))
@@ -495,12 +514,13 @@ def critic_rounds(
 
 def clean(
     video: Path, params: Params, geometry: Geometry, masks: dict[int, np.ndarray] | None,
-    *, raw_out: Path | None, hidden: frozenset[int] = frozenset(),
+    *, raw_out: Path | None, hidden: frozenset[int] = frozenset(), exposure: list[list[float]] | None = None,
 ) -> Cleaned:
     """Pass 1: run the clean plate forward recording every change, then veto the transient ones.
 
     Frames in `hidden` count as fully covered, so nothing in them is used: the evaluation holds
-    them out to score against.
+    them out to score against. `exposure`, per frame, is the light measured around the canvas
+    (surround_exposure); without it the plate measures on the canvas.
     """
 
     def frames():
@@ -521,7 +541,10 @@ def clean(
         with closing(frames()) as head:
             start = next(head)
 
-    plate = CleanPlate(start, CleanPlateConfig(dilate_px=params.dilate, persist_frames=params.persist_frames, record=True))
+    plate = CleanPlate(start, CleanPlateConfig(
+        dilate_px=params.dilate, persist_frames=params.persist_frames, record=True,
+        normalize_exposure=params.exposure != "off",
+    ))
     occlusion: list[float] = []
     stillness: list[float] = []
     disagreement: list[float] = []
@@ -538,7 +561,7 @@ def clean(
                 occluder = None
             if index in hidden:
                 occluder = everything
-            plate.update(frame, occluder)
+            plate.update(frame, occluder, exposure[index] if exposure is not None and index < len(exposure) else None)
             disagreement.append(plate.disagreement)
             gains.append([float(value) for value in plate.gain])
             occlusion.append(0.0 if occluder is None else float(occluder.mean()))
@@ -575,7 +598,7 @@ def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[di
 
 def cached_clean(
     video: Path, params: Params, geometry: Geometry, masks, streams: list[dict], out: Path, *,
-    raw_out: Path | None,
+    raw_out: Path | None, exposure: list[list[float]] | None = None,
 ) -> Cleaned:
     """clean(), with its result kept next to the outputs.
 
@@ -586,7 +609,7 @@ def cached_clean(
     cache = out / f"clean-{_clean_key(video, params, geometry, streams)}.npz"
     if cache.exists() and (raw_out is None or raw_out.exists()):
         return _load_cleaned(cache)
-    cleaned = clean(video, params, geometry, masks, raw_out=raw_out)
+    cleaned = clean(video, params, geometry, masks, raw_out=raw_out, exposure=exposure)
     _save_cleaned(cache, cleaned)
     return cleaned
 
@@ -692,13 +715,14 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
 
     geometry = Geometry.of(info, params)
-    cleaned = cached_clean(video, params, geometry, masks, streams, out, raw_out=out / "raw.mp4")
+    exposure = surround_exposure(video, params, proxy_size if objects is not None else None, masks, out)
+    cleaned = cached_clean(video, params, geometry, masks, streams, out, raw_out=out / "raw.mp4", exposure=exposure)
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
     rounds: list[dict] = []
     if objects is not None and params.critic_rounds:
         with ledger.recording(out / LEDGER):
             cleaned, box_streams, rounds = critic_rounds(
-                video, params, geometry, out, objects, proxy_size, cleaned, cache_streams=streams
+                video, params, geometry, out, objects, proxy_size, cleaned, cache_streams=streams, exposure=exposure,
             )
         streams += box_streams
         for entry in rounds:
@@ -798,12 +822,13 @@ def verify(receipt_path: Path, video: Path) -> Verdict:
     if params.tracked:
         objects, _, proxy_size = sam_objects(video, params, info, folder)
         masks, _ = occluder_masks(objects, params, proxy_size)
-    cleaned = clean(video, params, geometry, masks, raw_out=None)
+    exposure = surround_exposure(video, params, proxy_size, masks, folder)
+    cleaned = clean(video, params, geometry, masks, raw_out=None, exposure=exposure)
     recorded = (receipt.get("critic") or {}).get("rounds") or []
     if objects is not None and recorded:
         try:
             cleaned, _, _ = critic_rounds(
-                video, params, geometry, folder, objects, proxy_size, cleaned, recorded=recorded
+                video, params, geometry, folder, objects, proxy_size, cleaned, recorded=recorded, exposure=exposure
             )
         except FileNotFoundError as missing:
             checks.append(("the critic's cached answers are present", False, str(missing)))

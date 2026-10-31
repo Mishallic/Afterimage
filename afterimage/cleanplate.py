@@ -7,7 +7,7 @@ moving shadows, glare and motion blur never make it into the result.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from itertools import chain
 
@@ -102,6 +102,66 @@ def exposure_gain(
     if lit.sum() < 500:
         return None
     return np.clip(np.percentile(sample[lit] / base[lit], percentile, axis=0), 0.6, 1.6)
+
+
+SURROUND_MARGIN = 0.03
+"""Share of the frame width kept clear around the canvas when measuring light on the room: the
+canvas's own edge, the easel and the canvas's shadow sit there."""
+MIN_SURROUND = 0.08
+"""Below this share of the frame showing the room around the canvas, exposure is measured on the
+canvas instead (a canvas filling the frame)."""
+SURROUND_FLOOR = 80
+"""Room pixels darker than this in the reference (shadowed floor, furniture) are left out: their
+ratios are mostly noise. With them, and the 80th percentile, the second session's blue gain read
+1.3 where the wall above the canvas had moved 1.18; lit pixels and the median read 1.18."""
+
+
+def surround_gains(
+    frames: Iterable[np.ndarray], canvas: np.ndarray, occluder: Callable[[int], np.ndarray | None],
+    *, smooth: int = 5,
+) -> list[list[float]] | None:
+    """Per-frame exposure gain measured on the room around the canvas, in the camera view.
+
+    Light and auto-exposure change the whole frame; paint lands only on the canvas. Measured on the
+    canvas, a wash of one colour over the whole bare canvas reads as a change of light and is
+    divided out: the second session's pink came out white. Measured on the wall, the floor and the
+    easel around it, minus whoever is in the way, the gain only follows the light. The reference is
+    the first frame with most of the surround clear; each gain is the median of the per-pixel ratios
+    to it over lit room pixels (SURROUND_FLOOR), carried over when too little is visible, and
+    smoothed over `smooth` frames. None when the canvas leaves too little of the room in view.
+    """
+    width = canvas.shape[1]
+    surround = ~dilate(canvas, max(2, round(SURROUND_MARGIN * width)))
+    if surround.mean() < MIN_SURROUND:
+        return None
+    reference: np.ndarray | None = None
+    reference_usable: np.ndarray | None = None
+    last = np.ones(3, dtype=np.float32)
+    gains: list[np.ndarray] = []
+    for index, frame in enumerate(frames):
+        usable = surround.copy()
+        mask = occluder(index)
+        if mask is not None and mask.any():
+            usable &= ~dilate(resize_nearest(mask.astype(bool), canvas.shape), 4)
+        current = frame.astype(np.float32)
+        usable &= current.max(axis=2) < 250
+        if reference is None:
+            if usable.mean() >= 0.6 * surround.mean():
+                reference, reference_usable = current, usable & (current.min(axis=2) > SURROUND_FLOOR)
+            gains.append(last.copy())
+            continue
+        gain = exposure_gain(current, reference, usable & reference_usable, step=2, percentile=50.0)
+        if gain is not None:
+            last = gain.astype(np.float32)
+        gains.append(last.copy())
+    if not gains or reference is None:
+        return None
+    stacked = np.stack(gains)
+    if smooth > 1 and len(stacked) >= smooth:
+        half = smooth // 2
+        padded = np.pad(stacked, ((half, half), (0, 0)), mode="edge")
+        stacked = np.median(np.stack([padded[k:k + len(stacked)] for k in range(smooth)]), axis=0)
+    return [[float(value) for value in row] for row in stacked]
 
 
 def first_visible_canvas(
@@ -206,13 +266,20 @@ class CleanPlate:
     def canvas(self) -> np.ndarray:
         return np.clip(self._clean, 0, 255).astype(np.uint8)
 
-    def update(self, frame: np.ndarray, occluder: np.ndarray | None = None) -> np.ndarray:
+    def update(self, frame: np.ndarray, occluder: np.ndarray | None = None, gain: Iterable[float] | None = None) -> np.ndarray:
+        """`gain`, when given, is the exposure measured elsewhere (see surround_gains); otherwise
+        it is measured on the canvas."""
         cfg = self.config
         current = frame.astype(np.float32)
         visible = visible_mask(occluder, frame.shape[:2], cfg.dilate_px)
+        measured = None if gain is None else np.asarray(list(gain), dtype=np.float32)
         gain = self.gain
         if cfg.normalize_exposure:
-            current, gain = self._match_exposure(current, visible)
+            if measured is not None:
+                gain = measured
+                current = current / gain
+            else:
+                current, gain = self._match_exposure(current, visible)
 
         differs = np.abs(current - self._clean).max(axis=2) > cfg.change_threshold
         steady = np.abs(current - self._candidate).max(axis=2) <= cfg.change_threshold

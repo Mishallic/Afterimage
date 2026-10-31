@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from afterimage import media
 from afterimage.config import ROOT
 from afterimage.heldout import heldout_report, markdown
-from afterimage.pipeline import Params, sam_occluders
+from afterimage.pipeline import Params, sam_occluders, surround_exposure
 
 
 def seconds(text: str) -> tuple[float, float]:
@@ -55,6 +55,7 @@ def main() -> None:
     info = media.probe(args.video)
     boxes = [stream for stream in receipt["sam_streams"] if stream["concept"].startswith("critic")]
     masks = sam_occluders(args.video, params, info, folder, box_streams=boxes)[0]
+    exposure = surround_exposure(args.video, params, media.output_size(info, params.sam_width), masks, folder)
 
     def frames(stretch: tuple[float, float]) -> tuple[int, int]:
         return round(stretch[0] * params.fps), round(stretch[1] * params.fps)
@@ -64,6 +65,7 @@ def main() -> None:
         windows=[frames(stretch) for stretch in args.holdout] or None,
         static=[frames(stretch) for stretch in args.static],
         min_seconds=args.min_seconds,
+        exposure=exposure,
     )
     report["session"] = {"video": args.video.name, "sha256": receipt["source"]["sha256"],
                          "minutes": round(info.duration / 60, 1)}

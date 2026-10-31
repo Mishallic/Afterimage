@@ -162,5 +162,56 @@ class RefinedRecordTest(unittest.TestCase):
         self.assertLessEqual(int(np.abs(plate.canvas[15, 17].astype(int) - true.astype(int)).max()), 4)
 
 
+
+class SurroundExposureTest(unittest.TestCase):
+    """Light is measured on the room around the canvas: paint over the whole canvas stays paint,
+    and a change of light after the canvas is covered is still a change of light."""
+
+    @staticmethod
+    def scene() -> tuple[list[np.ndarray], np.ndarray, dict[int, np.ndarray]]:
+        height, width = 120, 160
+        canvas = np.zeros((height, width), dtype=bool)
+        canvas[20:100, 40:120] = True
+        person = np.zeros((height, width), dtype=bool)
+        person[60:120, 128:160] = True
+        frames, masks = [], {}
+        for index in range(45):
+            frame = np.empty((height, width, 3), dtype=np.float32)
+            frame[:] = (180, 170, 150)  # the wall
+            frame[canvas] = (230, 230, 230)
+            painted = min(max(index - 9, 0), 10) * 8  # a pink wash, eight columns a frame from frame 10
+            frame[20:100, 40:40 + painted] = (220, 160, 170)
+            if 5 <= index < 15:
+                frame[person] = (40, 50, 60)
+                masks[index] = person
+            if index >= 30:
+                frame *= 1.2  # then the phone brightens everything
+            frames.append(np.clip(frame, 0, 255).astype(np.uint8))
+        return frames, canvas, masks
+
+    def test_gains_follow_the_light_not_the_paint(self) -> None:
+        from afterimage.cleanplate import surround_gains
+
+        frames, canvas, masks = self.scene()
+        gains = np.array(surround_gains(frames, canvas, masks.get, smooth=1))
+        np.testing.assert_allclose(gains[:30], 1.0, atol=0.02, err_msg="the wash is not a change of light")
+        np.testing.assert_allclose(gains[31:], 1.2, atol=0.03, err_msg="the brighter exposure is")
+
+    def test_paint_stays_paint_and_light_stays_light(self) -> None:
+        from afterimage.cleanplate import CleanPlate, CleanPlateConfig, surround_gains
+
+        frames, canvas, masks = self.scene()
+        views = [frame[20:100, 40:120] for frame in frames]
+        gains = surround_gains(frames, canvas, masks.get, smooth=1)
+        config = CleanPlateConfig(dilate_px=0, persist_frames=3, record=True)
+        plate = CleanPlate(views[0], config)
+        for index, view in enumerate(views):
+            plate.update(view, None, gains[index])
+        pink = np.array((220, 160, 170))
+        self.assertLess(int(np.abs(plate.canvas[40, 40].astype(int) - pink).max()), 6,
+                        "the wash is kept as paint and the brighter light is undone")
+        self.assertEqual(int(plate.gain[1] * 100 + 0.5), 120, "the plate used the measured gain")
+
+
 if __name__ == "__main__":
     unittest.main()
