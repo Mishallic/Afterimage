@@ -56,7 +56,7 @@ class CameoOcclusionTest(unittest.TestCase):
     finished painting in the room; with reveal, the last frame is the real canvas."""
 
     def test_person_stays_in_front_and_the_end_reveals_the_real_canvas(self) -> None:
-        from afterimage.cameo import colour_gain
+        from afterimage.cameo import colour_curve, graded
 
         session = synthetic_session(frames=40)
         final = session[-1][2]
@@ -74,8 +74,11 @@ class CameoOcclusionTest(unittest.TestCase):
         room[person] = (200, 40, 160)
         blank = np.full_like(final, 228)
 
-        gain = colour_gain(room, region, projected_final, blank, person)
-        np.testing.assert_allclose(gain, light, atol=0.05)
+        curve = colour_curve(room, region, projected_final, blank, person)
+        inner = region & ~dilate(~region, 8) & ~dilate(person, 6)
+        regraded = graded(projected_final, curve).astype(np.int16)
+        self.assertLess(np.median(np.abs(regraded - room.astype(np.int16)).max(axis=2)[inner]), 6,
+                        "the graded finished painting matches the canvas in the room")
 
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)

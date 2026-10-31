@@ -1,7 +1,8 @@
 """Cameo mode: you, sitting next to your canvas, while it paints itself.
 
 Film a short clip of yourself beside the easel, mark the canvas corners, and the clean timelapse
-is projected onto that canvas: real pixels in a real room. Where you pass in front of the canvas,
+is projected onto that canvas: real pixels in a real room, graded from a white canvas in that room's
+light to the finished painting as it looks there. Where you pass in front of the canvas,
 SAM 3.1's mask of you keeps you in front of the painting. At the end the projection can fade out
 onto the real canvas in the clip, so the last thing on screen is the painting itself.
 """
@@ -47,28 +48,68 @@ def _white_balance(clip_frame: np.ndarray, region: np.ndarray, canvas_frame: np.
     return np.clip(gain, 0.5, 2.0)
 
 
-def colour_gain(
+def colour_curve(
     clip_frame: np.ndarray, region: np.ndarray, projected_final: np.ndarray, first_canvas: np.ndarray,
     hidden: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Per-channel gain that puts the timelapse in the clip's light.
+    """A per-channel tone curve (3 x 256 lookup) that puts the timelapse in the clip's light.
 
     When the clip shows the finished painting (the usual cameo: filmed after the session), the
-    projected last frame and the clip are compared pixel by pixel inside the canvas, away from its
-    edges and from the person: the median ratio per channel. Otherwise the whites are matched.
+    tones of the projected last frame are matched to the tones of the real canvas in the clip,
+    channel by channel, quantile to quantile, inside the canvas and away from its edges and the
+    person. A single gain can't do it: filmed by a window, the painting is far darker than under
+    the session's lamp, and a gain that fits the paint turns the white canvas teal. The curve is
+    one global grade for every frame; no pixel is moved or made. When the clip shows a different
+    canvas, the whites are matched instead, as a straight gain.
     """
     inner = region & ~dilate(~region, 8)
     if hidden is not None:
         inner &= ~dilate(hidden, 6)
     clip_pixels = clip_frame[inner].astype(np.float32)
     projected = projected_final[inner].astype(np.float32)
+    levels = np.arange(256, dtype=np.float32)
     if len(clip_pixels) >= 1000:
         a, b = clip_pixels.mean(axis=1), projected.mean(axis=1)
         if a.std() > 1 and b.std() > 1 and np.corrcoef(a, b)[0, 1] >= MATCH_CORRELATION:
-            lit = projected.min(axis=1) > 20
-            if lit.sum() >= 500:
-                return np.clip(np.median(clip_pixels[lit] / projected[lit], axis=0), 0.5, 2.0)
-    return _white_balance(clip_frame, region, first_canvas)
+            quantiles = np.linspace(0.5, 99.5, 100)
+            curve = np.empty((3, 256), dtype=np.float32)
+            for channel in range(3):
+                source = np.percentile(projected[:, channel], quantiles)
+                target = np.percentile(clip_pixels[:, channel], quantiles)
+                source, keep = np.unique(source, return_index=True)
+                target = np.maximum.accumulate(target[keep])
+                top = target[-1] * min(255.0 / max(source[-1], 1.0), 1.5)
+                curve[channel] = np.interp(levels, np.r_[0.0, source, 255.0], np.r_[0.0, target, top])
+            return np.clip(np.round(curve), 0, 255).astype(np.uint8)
+    gain = _white_balance(clip_frame, region, first_canvas)
+    return np.clip(np.round(levels[None, :] * gain[:, None]), 0, 255).astype(np.uint8)
+
+
+def room_white_curve(
+    clip_frame: np.ndarray, region: np.ndarray, first_canvas: np.ndarray, hidden: np.ndarray | None = None,
+) -> np.ndarray | None:
+    """A straight gain that makes the bare canvas as white as the room right around it (the wall,
+    the canvas's own edge), or None when nothing around the canvas is light enough to tell."""
+    ring = dilate(region, 60) & ~dilate(region, 6)
+    if hidden is not None:
+        ring &= ~dilate(hidden, 6)
+    pixels = clip_frame[ring].astype(np.float32)
+    if len(pixels) < 1000:
+        return None
+    luminance = pixels.mean(axis=1)
+    white = pixels[luminance >= np.percentile(luminance, 90)].mean(axis=0)
+    if white.mean() < 120:
+        return None
+    bare = first_canvas.reshape(-1, 3).astype(np.float32)
+    bare_luminance = bare.mean(axis=1)
+    gain = np.clip(white / np.maximum(bare[bare_luminance >= np.percentile(bare_luminance, 50)].mean(axis=0), 1.0), 0.5, 2.0)
+    levels = np.arange(256, dtype=np.float32)
+    return np.clip(np.round(levels[None, :] * gain[:, None]), 0, 255).astype(np.uint8)
+
+
+def graded(frame: np.ndarray, curve: np.ndarray) -> np.ndarray:
+    """`frame` through a 3 x 256 per-channel lookup."""
+    return np.stack([curve[channel][frame[..., channel]] for channel in range(3)], axis=-1)
 
 
 def render_cameo(
@@ -118,7 +159,14 @@ def render_cameo(
     first_index, first_room = next(room)
     final = next(media.read_indices(timelapse, [total - 1], fps=info.fps, size=canvas_size))
     first_canvas = next(media.read_indices(timelapse, [0], fps=info.fps, size=canvas_size))
-    gain = colour_gain(first_room, region, project.image(final), first_canvas, hidden_at(first_index))
+    first_hidden = hidden_at(first_index)
+    end_curve = colour_curve(first_room, region, project.image(final), first_canvas, first_hidden)
+    start_curve = room_white_curve(first_room, region, first_canvas, first_hidden)
+    if start_curve is None:
+        start_curve = end_curve
+    # The grade eases from "a white canvas in this room" to "this painting in this room" as the
+    # paint goes on, so the blank canvas starts white and the last frame meets the real canvas.
+    start_curve, end_curve = start_curve.astype(np.float32), end_curve.astype(np.float32)
 
     canvases = media.read_indices(timelapse, indices, fps=info.fps, size=canvas_size)
     with media.FrameWriter(out, size, fps) as writer:
@@ -130,7 +178,9 @@ def render_cameo(
                 alpha = alpha * (1.0 - soften(hidden, 2)[..., None])
             if reveal and hold_frames and k >= painting:
                 alpha = alpha * (1.0 - ease((k - painting + 1) / hold_frames, "inout"))
-            projected = project.image(canvas).astype(np.float32) * gain
+            share = indices[k] / max(total - 1, 1)
+            curve = np.round(start_curve + (end_curve - start_curve) * share).astype(np.uint8)
+            projected = project.image(graded(canvas, curve)).astype(np.float32)
             writer.write(np.clip(frame * (1 - alpha) + projected * alpha, 0, 255))
     return out
 
