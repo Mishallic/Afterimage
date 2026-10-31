@@ -54,6 +54,16 @@ Neighbours committed a second apart under slightly different light then differ b
 change threshold, and the replay looks mottled and posterised. The amendment is to the colour of
 the same stroke, not a new event: the pixel receipt and the Underneath layers are unchanged.
 """
+REFINE_WINDOW = 60
+"""Updates after a commit during which the stroke's recorded colour may be amended: one minute at
+1 fps, long enough for a noisy first impression to settle. Without the limit, a slow change that
+never crossed the change threshold (the next thin layer, paint drying darker) kept amending the
+first stroke, and the second session's replay showed the final lavender on a spot that was pink
+at minute four."""
+DRIFT_THRESHOLD = 12.0
+"""After REFINE_WINDOW, a settled pixel whose plate value has drifted this far from the colour on
+record gets a new recorded change, dated to the update it is noticed: slow change is still change,
+it just belongs to the time it happened."""
 
 
 def _to_uint8(values: np.ndarray) -> np.ndarray:
@@ -336,19 +346,42 @@ class CleanPlate:
         return self.canvas
 
     def _refine(self, settled: np.ndarray) -> None:
-        """Amend the recorded colour of settled pixels that have drifted from it (see REFINE_THRESHOLD)."""
-        off = settled & (self._entry_chunk >= 0)
-        off[off] = np.abs(self._clean[off] - self._recorded[off]).max(axis=1) > REFINE_THRESHOLD
-        if not off.any():
-            return
-        flat = np.flatnonzero(off)
-        chunks = self._entry_chunk.reshape(-1)[flat]
-        positions = self._entry_pos.reshape(-1)[flat]
-        values = _to_uint8(self._clean.reshape(-1, 3)[flat])
-        for chunk in np.unique(chunks):
-            inside = chunks == chunk
-            self._commits[chunk][3][positions[inside]] = values[inside]
-        self._recorded.reshape(-1, 3)[flat] = values
+        """Keep the record in step with the plate for settled pixels.
+
+        Within REFINE_WINDOW updates of its commit, a stroke's recorded colour is amended to the
+        plate's (REFINE_THRESHOLD). After that, drift past DRIFT_THRESHOLD is recorded as a new
+        change at this update, so it appears in the replay when it happened, not at the first stroke.
+        """
+        drift = np.zeros(settled.shape, dtype=np.float32)
+        tracked = settled & (self._entry_chunk >= 0)
+        drift[tracked] = np.abs(self._clean[tracked] - self._recorded[tracked]).max(axis=1)
+        young = (self._updates - self._committed_at) <= REFINE_WINDOW
+        amend = tracked & young & (drift > REFINE_THRESHOLD)
+        renew = tracked & ~young & (drift > DRIFT_THRESHOLD)
+        if amend.any():
+            flat = np.flatnonzero(amend)
+            chunks = self._entry_chunk.reshape(-1)[flat]
+            positions = self._entry_pos.reshape(-1)[flat]
+            values = _to_uint8(self._clean.reshape(-1, 3)[flat])
+            for chunk in np.unique(chunks):
+                inside = chunks == chunk
+                self._commits[chunk][3][positions[inside]] = values[inside]
+            self._recorded.reshape(-1, 3)[flat] = values
+        if renew.any():
+            pixels = np.flatnonzero(renew)
+            after = _to_uint8(self._clean.reshape(-1, 3)[pixels])
+            self._commits.append((
+                pixels.astype(np.int32),
+                np.full(len(pixels), self._updates, dtype=np.int32),
+                _to_uint8(self._recorded.reshape(-1, 3)[pixels]),
+                after,
+            ))
+            self._recorded.reshape(-1, 3)[pixels] = after
+            self._entry_chunk.reshape(-1)[pixels] = len(self._commits) - 1
+            self._entry_pos.reshape(-1)[pixels] = np.arange(len(pixels), dtype=np.int32)
+            self._committed_at.reshape(-1)[pixels] = self._updates
+            self._reference.reshape(-1, 3)[pixels] = self._clean.reshape(-1, 3)[pixels]
+            self.painted_at.reshape(-1)[pixels] = self._updates
 
     def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Undo phone auto-exposure and white-balance drift, using the uncovered canvas.

@@ -163,6 +163,37 @@ class RefinedRecordTest(unittest.TestCase):
 
 
 
+class SlowDriftTest(unittest.TestCase):
+    """A slow change long after a stroke is recorded when it happens, not painted over the stroke."""
+
+    def test_the_first_stroke_keeps_its_colour_and_the_drift_is_dated(self) -> None:
+        from afterimage.cleanplate import REFINE_WINDOW, CleanPlate, CleanPlateConfig
+
+        size = (20, 16)
+        white = np.full((size[1], size[0], 3), 230, dtype=np.uint8)
+        pink = np.array([210, 150, 155], dtype=np.float32)
+        grey = np.array([175, 150, 165], dtype=np.float32)  # 35 levels from pink, reached slowly
+        plate = CleanPlate(white, CleanPlateConfig(persist_frames=3, record=True, normalize_exposure=False, dilate_px=0))
+        drift_from = 5 + REFINE_WINDOW + 40
+        for update in range(drift_from + 160):
+            frame = white.astype(np.float32)
+            if update >= 5:
+                share = min(max(update - drift_from, 0) / 120, 1.0)  # a 0.3-level step per update
+                frame[4:12, 5:15] = pink + (grey - pink) * share
+            plate.update(np.clip(frame + 0.5, 0, 255).astype(np.uint8), None)
+        timeline = plate.timeline()
+        spot = timeline.pixel == 8 * size[0] + 10
+        frames = timeline.frame[spot]
+        afters = timeline.after[spot].astype(int)
+        order = np.argsort(frames)
+        frames, afters = frames[order], afters[order]
+        self.assertEqual(int(frames[0]), 5)
+        self.assertLessEqual(int(np.abs(afters[0] - pink).max()), 3, f"the stroke keeps its own colour: {afters[0]}")
+        self.assertGreater(len(frames), 1, "the slow change is on record")
+        self.assertGreater(int(frames[1]), drift_from, "dated when it happened")
+        self.assertLessEqual(int(np.abs(afters[-1] - grey).max()), 14, f"and it ends near the new colour: {afters[-1]}")
+
+
 class SurroundExposureTest(unittest.TestCase):
     """Light is measured on the room around the canvas: paint over the whole canvas stays paint,
     and a change of light after the canvas is covered is still a change of light."""
