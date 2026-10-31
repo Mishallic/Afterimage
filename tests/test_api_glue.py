@@ -219,5 +219,29 @@ class VoiceTest(unittest.TestCase):
         self.assertIn(b"Content-Type: audio/wav", body)
 
 
+
+class EmptyAnswerTest(unittest.TestCase):
+    """Spark spending its whole budget on reasoning is asked again with more room and less effort."""
+
+    def test_an_empty_answer_is_asked_again_with_more_room(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from afterimage import spark
+
+        calls = []
+
+        def create(**kwargs):
+            calls.append((kwargs["reasoning"]["effort"], kwargs["max_output_tokens"]))
+            text = "" if len(calls) == 1 else '{"defects": []}'
+            return SimpleNamespace(id=f"resp_{len(calls)}", usage=None, output_text=text)
+
+        api = SimpleNamespace(responses=SimpleNamespace(create=create))
+        with mock.patch.object(spark, "spark_provider", return_value="meta"):
+            answer = spark.ask_json(api, [{"type": "input_text", "text": "?"}], spark.CRITIC_SCHEMA, "reconstruction_critic", effort="high")
+        self.assertEqual(answer, {"defects": []})
+        self.assertEqual(calls, [("high", 8000), ("medium", 16000)])
+
+
 if __name__ == "__main__":
     unittest.main()

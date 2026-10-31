@@ -262,13 +262,25 @@ def _described(content: list[dict]) -> dict:
 
 ASK_ATTEMPTS = 5
 """Tries per Spark question; waits of 20, 40, 60 and 80 s between them ride out a dropped connection."""
+MAX_OUTPUT_TOKENS = 32000
+"""The most a retry asks for: on "high" effort Spark 1.3 once spent all 8,000 tokens reasoning
+about a critic pair and returned no answer at all."""
+LOWER_EFFORT = {"high": "medium", "medium": "low", "low": "low"}
+
+
+class EmptyAnswer(RuntimeError):
+    """Spark finished without an answer (its whole budget went to reasoning)."""
 
 
 def ask_json(
     api: OpenAI, content: list[dict], schema: dict, name: str, *, effort: str = "medium",
     max_output_tokens: int = 8000,
 ) -> dict:
-    """One structured answer from Spark, retried through dropped connections (each try is logged)."""
+    """One structured answer from Spark, retried through dropped connections and empty answers.
+
+    An empty answer is asked again with twice the budget and one step less effort, so a question
+    Spark overthinks still gets answered. Every try is in the ledger.
+    """
     for attempt in range(1, ASK_ATTEMPTS + 1):
         try:
             return _ask_json(api, content, schema, name, effort=effort, max_output_tokens=max_output_tokens)
@@ -276,6 +288,11 @@ def ask_json(
             if attempt == ASK_ATTEMPTS:
                 raise
             time.sleep(20 * attempt)
+        except EmptyAnswer:
+            if attempt == ASK_ATTEMPTS:
+                raise
+            max_output_tokens = min(max_output_tokens * 2, MAX_OUTPUT_TOKENS)
+            effort = LOWER_EFFORT.get(effort, effort)
     raise AssertionError("unreachable")
 
 
@@ -319,7 +336,10 @@ def _ask_json(
         logged["id"] = response.id
         usage = getattr(response, "usage", None)
         logged["usage"] = usage.model_dump() if hasattr(usage, "model_dump") else usage
-        answer = json.loads(response.output_text)
+        text = (response.output_text or "").strip()
+        if not text:
+            raise EmptyAnswer(f"{name}: no answer within {max_output_tokens} output tokens on {effort} effort")
+        answer = json.loads(text)
         logged["answer"] = answer
     return answer
 
