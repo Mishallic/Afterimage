@@ -72,7 +72,8 @@ MAX_OBJECTS_PER_CALL = 16
 STREAM_READ_TIMEOUT = 300.0
 """Seconds without a streamed event before a SAM call counts as stalled. A full session streams
 an event every few seconds; on Oct 30 one call sat silent for 36 minutes and would have for ever."""
-STREAM_ATTEMPTS = 3
+STREAM_ATTEMPTS = 5
+"""Tries per stream; waits of 30, 60, 90 and 120 s between them ride out a dropped connection."""
 """A stalled or dropped stream is started over, this many times at most; each attempt is in the ledger."""
 
 
@@ -101,16 +102,23 @@ async def upload_cached(
     """Upload once and remember the file id next to the outputs."""
     if id_file.exists():
         return id_file.read_text(encoding="utf-8").strip()
-    with ledger.call(
-        "files.create", f"upload {video.name} for SAM",
-        file=video.name, bytes=video.stat().st_size, sha256=ledger.file_sha256(video),
-    ) as logged, video.open("rb") as handle:
-        uploaded = await api.files.create(
-            purpose="user_data",
-            file=handle,
-            expires_after={"anchor": "created_at", "seconds": expires_days * 86_400},
-        )
-        logged["file_id"] = uploaded.id
+    for attempt in range(1, STREAM_ATTEMPTS + 1):
+        try:
+            with ledger.call(
+                "files.create", f"upload {video.name} for SAM" + ("" if attempt == 1 else f" (attempt {attempt})"),
+                file=video.name, bytes=video.stat().st_size, sha256=ledger.file_sha256(video),
+            ) as logged, video.open("rb") as handle:
+                uploaded = await api.files.create(
+                    purpose="user_data",
+                    file=handle,
+                    expires_after={"anchor": "created_at", "seconds": expires_days * 86_400},
+                )
+                logged["file_id"] = uploaded.id
+            break
+        except (openai.APITimeoutError, openai.APIConnectionError):
+            if attempt == STREAM_ATTEMPTS:
+                raise
+            await asyncio.sleep(min(120, 30 * attempt))
     id_file.parent.mkdir(parents=True, exist_ok=True)
     id_file.write_text(uploaded.id, encoding="utf-8")
     return uploaded.id
@@ -162,7 +170,7 @@ async def _segment(
                 partial.unlink(missing_ok=True)
                 if attempt == STREAM_ATTEMPTS:
                     raise
-                await asyncio.sleep(15 * attempt)
+                await asyncio.sleep(min(120, 30 * attempt))
         partial.replace(events_file)
     return await parse_cached(events_file)
 

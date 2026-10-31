@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+import openai
 from openai import OpenAI
 
 from . import imaging, ledger, media
@@ -258,7 +260,26 @@ def _described(content: list[dict]) -> dict:
     }
 
 
+ASK_ATTEMPTS = 5
+"""Tries per Spark question; waits of 20, 40, 60 and 80 s between them ride out a dropped connection."""
+
+
 def ask_json(
+    api: OpenAI, content: list[dict], schema: dict, name: str, *, effort: str = "medium",
+    max_output_tokens: int = 8000,
+) -> dict:
+    """One structured answer from Spark, retried through dropped connections (each try is logged)."""
+    for attempt in range(1, ASK_ATTEMPTS + 1):
+        try:
+            return _ask_json(api, content, schema, name, effort=effort, max_output_tokens=max_output_tokens)
+        except (openai.APITimeoutError, openai.APIConnectionError):
+            if attempt == ASK_ATTEMPTS:
+                raise
+            time.sleep(20 * attempt)
+    raise AssertionError("unreachable")
+
+
+def _ask_json(
     api: OpenAI, content: list[dict], schema: dict, name: str, *, effort: str = "medium",
     max_output_tokens: int = 8000,
 ) -> dict:

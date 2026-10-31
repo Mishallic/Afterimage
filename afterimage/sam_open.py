@@ -28,7 +28,8 @@ machine out of memory that way. The volume upload streams from disk.
 MODEL = "facebook/sam3.1 (open weights, Modal)"
 GPU_USD_PER_HOUR = 1.10
 """Rough A10 rate, for the cost column of the ledger; Modal bills per second."""
-RETRIES = 6
+RETRIES = 20
+"""Waits of 10, 20 … 60 s between tries: about a quarter of an hour of no network before giving up."""
 
 
 def _modal():
@@ -60,7 +61,7 @@ def _result(proxy: Path, prompts: list[dict], call_file: Path) -> bytes:
         except modal.exception.ConnectionError:
             if attempt == RETRIES:
                 raise
-            time.sleep(10 * attempt)
+            time.sleep(min(60, 10 * attempt))
         except Exception:
             # The call itself failed (out of GPU memory, say): forget it, so the next run starts a
             # new one instead of fetching the same failure again.

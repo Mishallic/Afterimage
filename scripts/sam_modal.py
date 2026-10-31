@@ -28,8 +28,10 @@ import modal
 
 APP = "afterimage-sam"
 VERSION = "sam3.1"
-CHUNK_FRAMES = 1800
-"""Frames per tracking session: a 30-minute stretch at 1 fps fits a 24 GB card with the video on the CPU."""
+CHUNK_FRAMES = 600
+"""Frames per tracking session. The detector's state grows with every frame of a session: a
+30-minute stretch at 1 fps fit an A100-40GB on the first session, then ran it out of memory on
+the second (more things in view), as did 49 s of a cameo at 30 fps. Ten minutes leaves room."""
 GPUS = ["A100-40GB", "A100-80GB", "H100"]
 """A 22 GB card runs out of memory in the multiplex detector (it ran to 19 GB on an L4); 40 GB is the floor.
 The multiplex width is baked into the checkpoint (16), so it can't be narrowed to save memory."""
@@ -241,6 +243,13 @@ class Tracker:
             summary = lambda values: f"{values[0]:.2f}..{values[-1]:.2f} (n={len(values)})" if values else "none"  # noqa: E731
             print(f"[{key}] propagated {yielded} frames, {found} object-frames, {oversized} dropped as drift; "
                   f"scores with a mask {summary(present)}, without {summary(empty)}")
+        # The side tracker holds several GB of the card; the concept predictor needs it back.
+        del state
+        self._box_tracker = None
+        import gc
+
+        gc.collect()
+        torch.cuda.empty_cache()
 
     def _tracker(self):
         """The SAM 2-style tracker, with an image backbone attached (it shares the detector's)."""
