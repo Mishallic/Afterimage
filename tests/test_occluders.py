@@ -50,5 +50,30 @@ class PaintedHandTest(unittest.TestCase):
         self.assertGreater(_error(final, self.truth)[self.painted_area].mean(), 40.0)
 
 
+
+class CanvasItselfTest(unittest.TestCase):
+    """An object that covers most of the canvas and stays on it is the canvas, not an occluder."""
+
+    def test_the_canvas_found_as_a_palette_is_kept_and_the_painter_is_not(self) -> None:
+        from afterimage.masks import Blob
+        from afterimage.occluders import painted
+
+        shape = (120, 160)
+        canvas = np.zeros(shape, dtype=bool)
+        canvas[20:100, 40:120] = True
+        objects = {}
+        for frame in range(60):
+            # SAM's outline of the canvas: a little past its edge, its shape shifting as paint goes on.
+            whole = np.zeros(shape, dtype=bool)
+            whole[18:102, 38 + frame % 5:122] = True
+            # The painter in front of the left half, reaching in from below the canvas.
+            person = np.zeros(shape, dtype=bool)
+            person[50:120, 30:90] = True
+            objects[frame] = {"palette with paint:c1:0": Blob.of(whole), "person:c1:1": Blob.of(person)}
+        keys = painted(objects, canvas, fps=1.0)
+        self.assertIn("palette with paint:c1:0", keys)
+        self.assertNotIn("person:c1:1", keys)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -28,6 +28,13 @@ MAX_ATTACHED = 0.6
 """A real hand is nearly always joined to an arm or body reaching in from outside."""
 BODY_OUTSIDE = 0.2
 """Objects with this much of their area off the canvas count as the painter's body."""
+CANVAS_COVER = 0.6
+"""An object covering this much of the canvas, in the median frame, while it stays on it
+(CANVAS_OUTSIDE) is the canvas itself. Asked for a "palette with paint", SAM 3.1 found the
+second session's paint-covered canvas in one 10-minute chunk; masked as an occluder, it hid the
+whole canvas for ten minutes. Its outline spilled past the edge and the painter always touched
+it, so the painted-object test missed it."""
+CANVAS_OUTSIDE = 0.15
 
 
 @dataclass
@@ -36,11 +43,14 @@ class Track:
     outside: list[float] = field(default_factory=list)
     stillness: list[float] = field(default_factory=list)
     attached: int = 0
+    coverage: list[float] = field(default_factory=list)
+    """Share of the canvas the object covers, per frame."""
 
 
 def tracks(objects: Objects, canvas: np.ndarray) -> dict[str, Track]:
     found: dict[str, Track] = defaultdict(Track)
     previous: dict[str, Blob] = {}
+    canvas_area = max(int(canvas.sum()), 1)
     for frame in sorted(objects):
         blobs = objects[frame]
         outside = {key: blob.share_outside(canvas) for key, blob in blobs.items()}
@@ -49,6 +59,7 @@ def tracks(objects: Objects, canvas: np.ndarray) -> dict[str, Track]:
             track = found[key]
             track.frames.append(frame)
             track.outside.append(outside[key])
+            track.coverage.append(blob.area * (1.0 - outside[key]) / canvas_area)
             if key in previous:
                 track.stillness.append(previous[key].iou(blob))
             grown = blob.grown(3)
@@ -66,7 +77,10 @@ def painted(objects: Objects, canvas: np.ndarray, fps: float) -> set[str]:
         inside = max(track.outside) <= MAX_OUTSIDE
         still = bool(track.stillness) and float(np.median(track.stillness)) >= MIN_STILLNESS
         free = track.attached / len(track.frames) <= MAX_ATTACHED
-        if lasting and inside and still and free:
+        canvas_itself = (
+            float(np.median(track.coverage)) >= CANVAS_COVER and float(np.median(track.outside)) <= CANVAS_OUTSIDE
+        )
+        if canvas_itself or (lasting and inside and still and free):
             keys.add(key)
     return keys
 
