@@ -28,8 +28,8 @@ session here was processed.
   model response, the parameters, and a hash chain over every output frame.
   `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
   and compares. On the first real session (84 minutes, 5,023 output frames) it passed in
-  about 85 minutes with no API key, every frame bit for bit (checked on the Oct 30 run; the
-  Oct 31 run with the refined record is being re-checked). Checkable, not proof: it shows
+  about 85 minutes with no API key, every frame bit for bit, both before and after the Oct 31
+  change to how the record keeps each stroke's colour. Checkable, not proof: it shows
   the output came from this footage through this code, nothing more.
 
 ## How it uses Meta's models
