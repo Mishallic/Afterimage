@@ -28,7 +28,8 @@ session here was processed.
   model response, the parameters, and a hash chain over every output frame.
   `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
   and compares. On the first real session (84 minutes, 5,023 output frames) it passed in
-  about 85 minutes with no API key, every frame bit for bit. Checkable, not proof: it shows
+  about 85 minutes with no API key, every frame bit for bit (checked on the Oct 30 run; the
+  Oct 31 run with the refined record is being re-checked). Checkable, not proof: it shows
   the output came from this footage through this code, nothing more.
 
 ## How it uses Meta's models
@@ -89,9 +90,31 @@ The hard cases, and what handles them:
 
 ## Evaluation
 
-Everything below was measured on synthetic scenes that were written alongside the method.
-They show the method does what it was designed to do; they are not a stand-in for footage.
-Real-session numbers land here as soon as sessions have been processed.
+### On a real session
+
+Session 1: 84 minutes of acrylic on canvas, a phone on a tripod, 5,023 frames at 1 fps
+([`eval/session1-api-v3.md`](eval/session1-api-v3.md)). The step-back protocol, described
+below, found 14 stretches where nobody was over the canvas and it held still. Each was hidden
+from every method, rebuilt from the rest of the session, and scored against what the camera saw.
+
+| Method | ΔE00, lower is better | Pixels clearly off (ΔE00 > 5) | PSNR (dB) |
+|---|---|---|---|
+| Afterimage | **3.60** | 20.9% | **26.0** |
+| Masked median (Loomis-style, same SAM masks) | 4.01 | **18.4%** | 25.7 |
+| Temporal median (no masks) | 5.59 | 27.2% | 21.4 |
+
+Read honestly: Afterimage has the lowest average error, but the masked median is closer on 10
+of the 14 stretches. Afterimage's average comes from never breaking. The median's worst
+stretch, early on while the canvas changed fast, scores 21.4; Afterimage scores 1.6 there.
+One known cause of Afterimage's losses is the opening pale wash, pink over white, which sits
+under its change threshold until stronger paint arrives. Making each stroke's recorded colour
+follow what the camera keeps showing moved Afterimage from 3.87 / 24.4% / 25.6 dB to the row
+above.
+
+### On synthetic scenes
+
+These were written alongside the method. They show it does what it was designed to do; they
+are not a stand-in for footage.
 
 Three scenes, three methods ([`eval/synthetic.md`](eval/synthetic.md), `scripts/afterimage_bench.py`):
 
