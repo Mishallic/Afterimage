@@ -51,6 +51,69 @@ class CameoTest(unittest.TestCase):
         self.assertLess(np.median(outside_error), 6)
 
 
+class CameoOcclusionTest(unittest.TestCase):
+    """Someone in front of the canvas stays in front of the painting; the colours come from the
+    finished painting in the room; with reveal, the last frame is the real canvas."""
+
+    def test_person_stays_in_front_and_the_end_reveals_the_real_canvas(self) -> None:
+        from afterimage.cameo import colour_gain
+
+        session = synthetic_session(frames=40)
+        final = session[-1][2]
+        canvas_size = (final.shape[1], final.shape[0])
+        quad = CORNERS * ROOM
+        rect = np.array([[0, 0], [canvas_size[0], 0], [canvas_size[0], canvas_size[1]], [0, canvas_size[1]]], float)
+        region = polygon_mask(quad, (ROOM[1], ROOM[0]))
+        light = np.array([0.85, 0.9, 1.1])
+        # The room shows the finished painting under a different light, as a cameo filmed afterwards does.
+        projected_final = Warper(homography(quad, rect), ROOM, final.shape[:2]).image(final)
+        room = np.full((ROOM[1], ROOM[0], 3), (70, 60, 50), np.uint8)
+        room[region] = np.clip(projected_final[region] * light, 0, 255).astype(np.uint8)
+        person = np.zeros((ROOM[1], ROOM[0]), dtype=bool)
+        person[120:300, 470:560] = True  # over the canvas's lower left part
+        room[person] = (200, 40, 160)
+        blank = np.full_like(final, 228)
+
+        gain = colour_gain(room, region, projected_final, blank, person)
+        np.testing.assert_allclose(gain, light, atol=0.05)
+
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            with media.FrameWriter(work / "room.mp4", ROOM, 30) as clip:
+                for _ in range(90):
+                    clip.write(room)
+            with media.FrameWriter(work / "timelapse.mp4", canvas_size, 30) as timelapse:
+                for _, _, truth in session:
+                    timelapse.write(truth)
+            out = render_cameo(work / "room.mp4", CORNERS, work / "timelapse.mp4", work / "cameo.mp4",
+                               seconds=2.0, hold=0.5, width=ROOM[0], occluder=lambda index: person, reveal=True)
+            frames = list(media.read_frames(out, fps=30, size=ROOM))
+
+        inner_person = person & ~dilate(~person, 4) & region
+        early = frames[3].astype(np.int16)
+        self.assertLess(np.median(np.abs(early - np.array((200, 40, 160))).max(axis=-1)[inner_person]), 12,
+                        "the person stays in front of the projected canvas")
+        canvas_only = region & ~dilate(~region, 4) & ~dilate(person, 4)
+        last = frames[-1].astype(np.int16)
+        self.assertLess(np.median(np.abs(last - room.astype(np.int16)).max(axis=2)[canvas_only]), 10,
+                        "the last frame is the real canvas in the room")
+
+
+class MaskLookupTest(unittest.TestCase):
+    def test_nearest_mask_in_time_without_the_small_figures(self) -> None:
+        from afterimage.cameo import mask_lookup
+        from afterimage.masks import Blob
+
+        person = Blob(10, 5, np.ones((30, 20), dtype=bool))  # 600 px of a 100x60 frame: 10 %
+        sticker = Blob(80, 2, np.ones((5, 4), dtype=bool))  # 20 px: a figure on the wall
+        objects = {0: {"person:1": person, "person:2": sticker}, 15: {"person:2": sticker}}
+        occluder = mask_lookup(objects, (100, 60), mask_fps=15.0, fps=30.0, start=0.0, min_share=0.015)
+        first = occluder(1)  # 1/30 s: nearest mask is frame 0 at 15 fps
+        self.assertEqual(int(first.sum()), 600, "the person, without the sticker")
+        self.assertIsNone(occluder(30), "only the sticker at 1 s: nothing in front of the canvas")
+        self.assertIsNone(occluder(90), "no masks that late")
+
+
 class ReceiptTest(unittest.TestCase):
     def test_time_map_and_grid(self) -> None:
         painted_at = np.full((60, 90), -1, np.int32)

@@ -61,6 +61,11 @@ def _result(proxy: Path, prompts: list[dict], call_file: Path) -> bytes:
             if attempt == RETRIES:
                 raise
             time.sleep(10 * attempt)
+        except Exception:
+            # The call itself failed (out of GPU memory, say): forget it, so the next run starts a
+            # new one instead of fetching the same failure again.
+            call_file.unlink(missing_ok=True)
+            raise
     call_file.unlink(missing_ok=True)
     return data
 
@@ -83,9 +88,10 @@ def _track(proxy: Path, prompts: list[dict], out: Path, *, purpose: str, frames:
         file=proxy.name, sha256=ledger.file_sha256(proxy), frames=frames, prompts=prompts,
     ) as logged:
         started = time.monotonic()
-        # Named by the prompts as well: after a code change the same round can ask different boxes,
-        # and resuming the earlier call would hand back masks for the old ones.
-        tag = hashlib.sha256(json.dumps(prompts, sort_keys=True).encode()).hexdigest()[:8]
+        # Named by the prompts and the video as well: after a code change the same round can ask
+        # different boxes, or the same prompts a different copy, and resuming the earlier call
+        # would hand back masks for the old question.
+        tag = hashlib.sha256(json.dumps([prompts, ledger.file_sha256(proxy)], sort_keys=True).encode()).hexdigest()[:8]
         data = _result(proxy, prompts, out.with_name(f"{out.stem}-{tag}.call"))
         seconds = time.monotonic() - started
         logged["seconds"] = round(seconds, 1)
