@@ -493,12 +493,12 @@ def critic_rounds(
             })
             if found:
                 # Nothing tracked means nothing new to mask; the rebuild would repeat the last one.
-                masks, _ = occluder_masks(objects, params, proxy_size)
+                masks, painted_keys = occluder_masks(objects, params, proxy_size)
                 if cache_streams is None:
                     cleaned = clean(video, params, geometry, masks, raw_out=None, exposure=exposure)
                 else:
                     cleaned = cached_clean(video, params, geometry, masks, cache_streams + streams, out, raw_out=None,
-                                           exposure=exposure)
+                                           exposure=exposure, painted=painted_keys)
         held = critic.holds(cleaned.kept, defects, keyframes, geometry.size)
         if held.any():
             cleaned = replace(cleaned, kept=cleaned.kept.without(held))
@@ -581,10 +581,10 @@ def clean(
     )
 
 
-CLEAN_CACHE_VERSION = 2
+CLEAN_CACHE_VERSION = 3
 
 
-def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict]) -> str:
+def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict], painted: list[str]) -> str:
     stat = video.stat()
     payload = {
         "version": CLEAN_CACHE_VERSION,
@@ -592,13 +592,15 @@ def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[di
         "params": params.to_dict(),
         "size": list(geometry.size),
         "streams": [stream.get("sha256") for stream in streams],
+        # Which tracked objects count as painted decides the masks as much as the streams do.
+        "painted": sorted(painted),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
 
 
 def cached_clean(
     video: Path, params: Params, geometry: Geometry, masks, streams: list[dict], out: Path, *,
-    raw_out: Path | None, exposure: list[list[float]] | None = None,
+    raw_out: Path | None, exposure: list[list[float]] | None = None, painted: list[str] = (),
 ) -> Cleaned:
     """clean(), with its result kept next to the outputs.
 
@@ -606,7 +608,7 @@ def cached_clean(
     streams (keyed by their hashes) loads it instead. verify() never comes here: re-deriving
     is its point.
     """
-    cache = out / f"clean-{_clean_key(video, params, geometry, streams)}.npz"
+    cache = out / f"clean-{_clean_key(video, params, geometry, streams, list(painted))}.npz"
     if cache.exists() and (raw_out is None or raw_out.exists()):
         return _load_cleaned(cache)
     cleaned = clean(video, params, geometry, masks, raw_out=raw_out, exposure=exposure)
@@ -716,7 +718,8 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
 
     geometry = Geometry.of(info, params)
     exposure = surround_exposure(video, params, proxy_size if objects is not None else None, masks, out)
-    cleaned = cached_clean(video, params, geometry, masks, streams, out, raw_out=out / "raw.mp4", exposure=exposure)
+    cleaned = cached_clean(video, params, geometry, masks, streams, out, raw_out=out / "raw.mp4", exposure=exposure,
+                           painted=kept_as_painted)
     print(f"{len(cleaned.timeline)} pixel changes, {cleaned.vetoed} vetoed as transient")
     rounds: list[dict] = []
     if objects is not None and params.critic_rounds:
