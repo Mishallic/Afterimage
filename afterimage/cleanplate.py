@@ -44,6 +44,16 @@ view of the canvas: someone walked in front of the lens, the camera was bumped, 
 switched. Painting never changes half the canvas in a second."""
 BLIND_FRAMES = 30
 """How many such updates in a row are skipped before the plate accepts that the scene has changed."""
+REFINE_THRESHOLD = 3.0
+"""A settled pixel whose plate value has drifted this far (per channel, 0-255) from the colour on
+record has its last recorded change amended to the drifted value.
+
+The plate follows what the camera keeps showing (drift_rate), but every output is replayed from
+the record, so a stroke committed from one noisy frame would keep that frame's value for good.
+Neighbours committed a second apart under slightly different light then differ by up to the
+change threshold, and the replay looks mottled and posterised. The amendment is to the colour of
+the same stroke, not a new event: the pixel receipt and the Underneath layers are unchanged.
+"""
 
 
 def _to_uint8(values: np.ndarray) -> np.ndarray:
@@ -183,6 +193,11 @@ class CleanPlate:
         """Updates skipped in a row because the frame was no view of the canvas (see MAX_DISAGREEMENT)."""
         self._updates = 0
         self._commits: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._recorded = self._clean.copy()
+        """The colour each pixel's latest recorded change says it has (see REFINE_THRESHOLD)."""
+        self._entry_chunk = np.full(initial_canvas.shape[:2], -1, dtype=np.int32)
+        self._entry_pos = np.zeros(initial_canvas.shape[:2], dtype=np.int32)
+        """Where in _commits each pixel's latest change is recorded; chunk -1 means never."""
 
     def timeline(self) -> Timeline:
         return Timeline.concat(self.painted_at.shape, self._commits)
@@ -228,16 +243,22 @@ class CleanPlate:
         settled = visible & ~differs
         self._streak[settled] = 0
         self._clean[settled] += cfg.drift_rate * (current[settled] - self._clean[settled])
+        if cfg.record:
+            self._refine(settled)
 
         commit = self._streak >= cfg.persist_frames
         if cfg.record and commit.any():
             pixels = np.flatnonzero(commit)
+            after = _to_uint8(self._candidate.reshape(-1, 3)[pixels])
             self._commits.append((
                 pixels.astype(np.int32),
                 self._since.reshape(-1)[pixels],
                 _to_uint8(self._clean.reshape(-1, 3)[pixels]),
-                _to_uint8(self._candidate.reshape(-1, 3)[pixels]),
+                after,
             ))
+            self._recorded.reshape(-1, 3)[pixels] = after
+            self._entry_chunk.reshape(-1)[pixels] = len(self._commits) - 1
+            self._entry_pos.reshape(-1)[pixels] = np.arange(len(pixels), dtype=np.int32)
         self._clean[commit] = self._candidate[commit]
         self._reference[commit] = self._candidate[commit]
         self._committed_at[commit] = self._updates
@@ -246,6 +267,21 @@ class CleanPlate:
         self.painted_at[commit] = self._since[commit]
         self._updates += 1
         return self.canvas
+
+    def _refine(self, settled: np.ndarray) -> None:
+        """Amend the recorded colour of settled pixels that have drifted from it (see REFINE_THRESHOLD)."""
+        off = settled & (self._entry_chunk >= 0)
+        off[off] = np.abs(self._clean[off] - self._recorded[off]).max(axis=1) > REFINE_THRESHOLD
+        if not off.any():
+            return
+        flat = np.flatnonzero(off)
+        chunks = self._entry_chunk.reshape(-1)[flat]
+        positions = self._entry_pos.reshape(-1)[flat]
+        values = _to_uint8(self._clean.reshape(-1, 3)[flat])
+        for chunk in np.unique(chunks):
+            inside = chunks == chunk
+            self._commits[chunk][3][positions[inside]] = values[inside]
+        self._recorded.reshape(-1, 3)[flat] = values
 
     def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Undo phone auto-exposure and white-balance drift, using the uncovered canvas.

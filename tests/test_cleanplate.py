@@ -133,5 +133,34 @@ class BlindFramesTest(unittest.TestCase):
         self.assertLess(_error(plate.canvas, changed).mean(), 3.0)
 
 
+class RefinedRecordTest(unittest.TestCase):
+    """A stroke committed from a noisy first impression ends up on record with the colour the
+    camera keeps showing afterwards, as one change, not the first frame's value for good."""
+
+    def test_the_record_follows_the_settled_colour(self) -> None:
+        from afterimage.cleanplate import CleanPlate, CleanPlateConfig
+
+        size = (40, 30)
+        white = np.full((size[1], size[0], 3), 235, dtype=np.uint8)
+        true = np.array([40, 60, 200], dtype=np.uint8)
+        noisy = np.array([55, 75, 214], dtype=np.uint8)  # 15 levels off, within the change threshold
+        plate = CleanPlate(white, CleanPlateConfig(persist_frames=3, record=True, normalize_exposure=False, dilate_px=0))
+        rng = np.random.default_rng(0)
+        for update in range(70):
+            frame = white.copy()
+            if update >= 5:
+                colour = noisy if update < 8 else true
+                frame[10:20, 10:25] = colour
+                frame = np.clip(frame.astype(np.int16) + rng.integers(-2, 3, size=frame.shape), 0, 255).astype(np.uint8)
+            plate.update(frame, None)
+        timeline = plate.timeline()
+        stroke = timeline.pixel == 15 * size[0] + 17
+        self.assertEqual(int(stroke.sum()), 1, "one change on record for the stroke")
+        self.assertEqual(int(timeline.frame[stroke][0]), 5, "dated to when it was first seen")
+        self.assertLessEqual(int(np.abs(timeline.after[stroke][0].astype(int) - true.astype(int)).max()), 4,
+                             f"the recorded colour follows the camera: {timeline.after[stroke][0]}")
+        self.assertLessEqual(int(np.abs(plate.canvas[15, 17].astype(int) - true.astype(int)).max()), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
