@@ -64,8 +64,15 @@ class Params:
     dilate: int = 12
     persist_seconds: float = 8.0
     """How long new paint must hold before it counts; longer than SAM's ~7.5 s object confirmation."""
-    revert_window: float = 300.0
-    """Seconds within which an undone change counts as transient (shadow, glare, resting hand)."""
+    revert_window: float = 60.0
+    """Seconds within which an undone change counts as transient (shadow, glare, resting hand).
+
+    It was five minutes. Painters rework a spot within minutes, so a change and its undoing are
+    often both real paint: on the second session the five-minute rule dropped 45% of all changes,
+    and at still moments the rebuild sat 3.4 dE00 from the camera with 17% of pixels clearly off.
+    One minute keeps the passing shadows out and the reworking in: 2.6 dE00, 8% (no rule at all:
+    2.3, 5%, with every passing shadow kept). Session 1: 4.48 / 29% at five minutes, 4.06 / 24% at one.
+    """
     concepts: tuple[str, ...] = ("person", "hand", "paintbrush")
     masks: str = "sam"
     """sam (SAM 3.1 through the Meta Model API), open (SAM 3.1's open weights on a Modal GPU),
@@ -584,12 +591,17 @@ def clean(
 CLEAN_CACHE_VERSION = 4
 
 
+CACHE_REVERT_WINDOW = 300.0
+"""The clean pass doesn't depend on the veto window (the veto is applied after it, on load), so the
+key always uses this one value; caches made before the window changed stay valid."""
+
+
 def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict], painted: list[str]) -> str:
     stat = video.stat()
     payload = {
         "version": CLEAN_CACHE_VERSION,
         "video": [video.name, stat.st_size, int(stat.st_mtime)],
-        "params": params.to_dict(),
+        "params": replace(params, revert_window=CACHE_REVERT_WINDOW).to_dict(),
         "size": list(geometry.size),
         "streams": [stream.get("sha256") for stream in streams],
         # Which tracked objects count as painted decides the masks as much as the streams do.
@@ -610,7 +622,7 @@ def cached_clean(
     """
     cache = out / f"clean-{_clean_key(video, params, geometry, streams, list(painted))}.npz"
     if cache.exists() and (raw_out is None or raw_out.exists()):
-        return _load_cleaned(cache)
+        return vetoed_again(_load_cleaned(cache), params)
     cleaned = clean(video, params, geometry, masks, raw_out=raw_out, exposure=exposure)
     _save_cleaned(cache, cleaned)
     return cleaned
@@ -630,6 +642,12 @@ def _save_cleaned(path: Path, cleaned: Cleaned) -> None:
         disagreement=np.array(cleaned.disagreement, dtype=np.float32),
         gains=np.array(cleaned.gains, dtype=np.float32).reshape(-1, 3),
     )
+
+
+def vetoed_again(cleaned: Cleaned, params: Params) -> Cleaned:
+    """The cached clean pass with the transient veto applied for these params (as clean() does)."""
+    vetoed = cleaned.timeline.transients(threshold=CleanPlateConfig().change_threshold, window=params.revert_frames)
+    return replace(cleaned, kept=cleaned.timeline.without(vetoed), vetoed=int(vetoed.sum()), vetoed_mask=vetoed)
 
 
 def _load_cleaned(path: Path) -> Cleaned:
