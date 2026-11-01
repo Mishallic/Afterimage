@@ -245,13 +245,18 @@ class CleanPlate:
         self._clean = initial_canvas.astype(np.float32)
         self._candidate = self._clean.copy()
         self._reference = self._clean.copy()
-        """What each pixel looked like when it was last committed (the start canvas until then).
+        """What each pixel looked like at its last stroke (the start canvas until then).
 
         Exposure is measured against this, never against the drifting plate: measured against
         the plate, the painter's shadow pulls the gain down, the plate brightens to match, and
         the next estimate takes the brighter plate as the truth. Over an hour that runs away.
+        Drift records follow the plate, so they never touch it.
         """
         self._committed_at = np.full(initial_canvas.shape[:2], -REFERENCE_AGE, dtype=np.int32)
+        """Update of each pixel's latest recorded change, stroke or drift: its refine window starts here."""
+        self._stroke_at = self._committed_at.copy()
+        """Update of each pixel's latest stroke: paint counts as a settled exposure reference
+        REFERENCE_AGE updates after it, and drift doesn't restart that."""
         self.gain = np.ones(3, dtype=np.float32)
         """The exposure gain last measured (or carried over when it couldn't be)."""
         self._streak = np.zeros(initial_canvas.shape[:2], dtype=np.int32)
@@ -348,6 +353,7 @@ class CleanPlate:
         self._clean[commit] = self._candidate[commit]
         self._reference[commit] = self._candidate[commit]
         self._committed_at[commit] = self._updates
+        self._stroke_at[commit] = self._updates
         self._streak[commit] = 0
         self.last_commit = commit
         self.painted_at[commit] = self._since[commit]
@@ -391,7 +397,6 @@ class CleanPlate:
             self._entry_chunk.reshape(-1)[pixels] = len(self._commits) - 1
             self._entry_pos.reshape(-1)[pixels] = np.arange(len(pixels), dtype=np.int32)
             self._committed_at.reshape(-1)[pixels] = self._updates
-            self._reference.reshape(-1, 3)[pixels] = self._clean.reshape(-1, 3)[pixels]
 
     def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Undo phone auto-exposure and white-balance drift, using the uncovered canvas.
@@ -403,7 +408,7 @@ class CleanPlate:
         gain = None
         if visible.mean() >= MIN_VISIBLE:
             bare = self.painted_at < 0
-            settled = self._updates - self._committed_at >= REFERENCE_AGE
+            settled = self._updates - self._stroke_at >= REFERENCE_AGE
             for usable in (visible & bare, visible & settled):
                 gain = exposure_gain(current, self._reference, usable, step=GAIN_STEP, percentile=GAIN_PERCENTILE)
                 if gain is not None:

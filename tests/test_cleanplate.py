@@ -196,6 +196,11 @@ class SlowDriftTest(unittest.TestCase):
         self.assertFalse(drift[0], "the stroke is a stroke")
         self.assertTrue(drift[1:].all(), "the slow change is marked as drift")
         self.assertEqual(int(timeline.painted_at()[8, 10]), 5, "the receipt still points at the stroke")
+        # The exposure yardstick stays at the stroke: a reference that follows the drifting plate
+        # is how measuring exposure on the canvas ran away.
+        self.assertLessEqual(float(np.abs(plate._reference[8, 10] - pink).max()), 3.0, "the reference stays at the stroke")
+        self.assertLess(int(plate._stroke_at[8, 10]), drift_from, "drift doesn't restart the reference clock")
+        self.assertGreater(int(plate._committed_at[8, 10]), drift_from, "but it does restart the refine window")
 
 
 class SurroundExposureTest(unittest.TestCase):
