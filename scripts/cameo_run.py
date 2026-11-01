@@ -64,7 +64,8 @@ def person_masks(clip: Path, mode: str) -> tuple[dict, tuple[int, int]]:
 def softened(timelapse: Path, frames: int) -> Path:
     """The timelapse with each frame the average of the last `frames`: strokes fade in instead of popping."""
     out = timelapse.with_name(f"{timelapse.stem}-soft{frames}.mp4")
-    if not out.exists():
+    # Made again whenever the timelapse is newer: a re-run rewrites the timelapse in place.
+    if not out.exists() or out.stat().st_mtime < timelapse.stat().st_mtime:
         weights = " ".join(["1"] * frames)
         subprocess.run([
             find_tool("ffmpeg"), "-y", "-v", "error", "-i", str(timelapse),
