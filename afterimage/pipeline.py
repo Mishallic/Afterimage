@@ -417,11 +417,15 @@ def critic_rounds(
             )
         else:
             keyframes = [int(index) for index in recorded[number - 1]["keyframes"]]
-        answer_file = out / "spark" / f"critic-{number}-{critic.answer_tag(keyframes, spark.CRITIC_PROMPT)}.json"
         shown = critic.pairs(
             proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
             fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
         )
+        if recorded is None:
+            tag = critic.answer_tag(keyframes, spark.CRITIC_PROMPT, shown)
+            answer_file = out / "spark" / f"critic-{number}-{tag}.json"
+        else:
+            answer_file = out / recorded[number - 1]["file"]
         if not answer_file.exists():
             if recorded is not None:
                 raise FileNotFoundError(str(answer_file))

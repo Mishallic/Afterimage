@@ -2,9 +2,10 @@
 
 After the clean plate has run, Spark sees (camera | reconstruction) pairs at the moments most
 likely to have gone wrong and boxes anything on the reconstruction that isn't paint. Objects
-go back to SAM as box prompts and become occluders wherever they appear; shadows, glare and
-shadows and glare are held, which drops the change that put them there (smears are only recorded). Every decision is cached and
-recorded, so a verify run replays it without asking again.
+go back to SAM as box prompts and become occluders wherever they appear; shadows and glare
+are held, which drops the change that put them there; smears are only recorded. Every
+decision is cached by what Spark was shown and recorded, so a verify run replays it without
+asking again.
 """
 
 from __future__ import annotations
@@ -57,10 +58,20 @@ def last_clear(occlusion: list[float], disagreement: list[float] | None = None) 
     return int(found[-1]) if len(found) else len(occlusion) - 1
 
 
-def answer_tag(keyframes: list[int], prompt: str = "") -> str:
-    """Names a critic answer by the keyframes it was about and the question asked, so a stale
-    answer is never reused."""
-    return hashlib.sha256(json.dumps([[int(index) for index in keyframes], prompt]).encode()).hexdigest()[:8]
+def answer_tag(
+    keyframes: list[int], prompt: str = "", shown: Iterable[tuple[np.ndarray, np.ndarray]] = (),
+) -> str:
+    """Names a critic answer by what Spark was asked: the keyframes, the question and the images.
+
+    Without the images, a re-run whose reconstruction had changed but picked the same keyframes
+    reused the answer about the old one: the second session's final run carried a verdict made
+    on a reconstruction from five hours and three fixes earlier.
+    """
+    digest = hashlib.sha256(json.dumps([[int(index) for index in keyframes], prompt]).encode())
+    for camera, reconstruction in shown:
+        digest.update(np.ascontiguousarray(camera).tobytes())
+        digest.update(np.ascontiguousarray(reconstruction).tobytes())
+    return digest.hexdigest()[:8]
 
 
 def _luminance(rgb: np.ndarray) -> np.ndarray:

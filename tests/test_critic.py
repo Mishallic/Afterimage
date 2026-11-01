@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from afterimage import media, pipeline, spark
+from afterimage import critic, media, pipeline, spark
 from afterimage.masks import Blob, dilate
 from afterimage.pipeline import Params
 from tests.synthetic import resting_hand_session
@@ -205,6 +205,21 @@ class CriticLoopTest(unittest.TestCase):
         self.assertEqual([defect["kind"] for defect in rounds[0]["defects"]], ["smear"])
         self.assertEqual(rounds[0]["held"], 0)
         tracker.assert_not_called()
+
+
+class AnswerTagTest(unittest.TestCase):
+    """A cached critic answer is about the images Spark saw, not just the frame numbers."""
+
+    def test_a_changed_reconstruction_is_asked_about_again(self) -> None:
+        camera = np.full((8, 8, 3), 200, np.uint8)
+        before = np.full((8, 8, 3), 120, np.uint8)
+        after = before.copy()
+        after[2, 3] = (121, 120, 120)
+        tag = critic.answer_tag([5, 9], "prompt", [(camera, before)])
+        self.assertEqual(tag, critic.answer_tag([5, 9], "prompt", [(camera, before.copy())]))
+        self.assertNotEqual(tag, critic.answer_tag([5, 9], "prompt", [(camera, after)]))
+        self.assertNotEqual(tag, critic.answer_tag([5, 10], "prompt", [(camera, before)]))
+        self.assertNotEqual(tag, critic.answer_tag([5, 9], "other", [(camera, before)]))
 
 
 class ArrivalFrameTest(unittest.TestCase):
