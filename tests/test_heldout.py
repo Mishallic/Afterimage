@@ -66,7 +66,8 @@ class HeldOutTest(unittest.TestCase):
         cls.video = Path(cls.folder.name) / "session.mp4"
         cls.masks = write_step_back_session(cls.video)
         params = Params(fps=2, width=SIZE[0], dilate=6, persist_seconds=2.0)
-        cls.report = heldout_report(cls.video, params, cls.masks, static=[(10, 20)])
+        cls.stills = Path(cls.folder.name) / "stills"
+        cls.report = heldout_report(cls.video, params, cls.masks, static=[(10, 20)], stills=cls.stills)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -87,6 +88,11 @@ class HeldOutTest(unittest.TestCase):
     def test_static_stretches_are_scored(self) -> None:
         self.assertEqual(self.report["static"]["minutes"], round(10 / 2 / 60, 2))
         self.assertGreaterEqual(self.report["static"]["false_commit_pct_per_min"], 0)
+
+    def test_every_scored_stretch_is_saved_as_images(self) -> None:
+        names = sorted(path.name for path in self.stills.iterdir())
+        self.assertEqual(names, sorted(f"{stem}-{kind}.jpg" for stem in ("000018", "000036")
+                                       for kind in ("camera", "afterimage", "masked", "temporal")))
 
     def test_markdown_lists_every_method_and_stretch(self) -> None:
         text = markdown(self.report, "session.mp4")

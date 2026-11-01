@@ -77,12 +77,14 @@ def heldout_report(
     video: Path, params: Params, masks: dict[int, np.ndarray] | None, *,
     windows: list[tuple[int, int]] | None = None, static: list[tuple[int, int]] = (),
     min_seconds: float = 3.0, segment_seconds: float = 10.0, exposure: list[list[float]] | None = None,
+    stills: Path | None = None,
 ) -> dict:
     """Rebuild the session with its clear windows hidden, and score every method on them.
 
     `masks` are the camera-view occluder masks the run used. Windows and static stretches are
     [start, stop) frame ranges; without `windows`, they're found in the masks. A window needs a
-    full segment of frames before it, or there is nothing to rebuild it from.
+    full segment of frames before it, or there is nothing to rebuild it from. With `stills`,
+    each scored window is saved there as images: the camera's view and every method's, as scored.
     """
     info = media.probe(video)
     geometry = Geometry.of(info, params)
@@ -145,6 +147,12 @@ def heldout_report(
             continue
         truth = np.clip(np.median(matched, axis=0) + 0.5, 0, 255).astype(np.uint8)
         entry["scores"] = {method: _scores(outputs[method][start], truth) for method in METHODS}
+        if stills is not None:
+            stem = f"{entry['start_s']:06.0f}"
+            media.write_image(truth, stills / f"{stem}-camera.jpg")
+            for method in METHODS:
+                shown = np.clip(_matched(outputs[method][start], truth) + 0.5, 0, 255).astype(np.uint8)
+                media.write_image(shown, stills / f"{stem}-{method.split(' ')[0].lower()}.jpg")
         report["windows"].append(entry)
 
     scored = report["windows"]

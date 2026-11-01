@@ -7,7 +7,7 @@ Needs a finished SAM run in out/<video name>/ (its receipt.json and cached SAM s
 makes no API calls. Held-out stretches have nobody over the canvas: found in the masks unless
 given in seconds. Static stretches, given in seconds, are when the painter is in view but not
 painting (mixing on the palette, say), so anything committed then is a false commit.
-Writes eval/<video name>.md and .json.
+Writes eval/<video name>.md and .json, and each scored stretch as images in <run>/heldout/.
 """
 
 from __future__ import annotations
@@ -40,6 +40,8 @@ def main() -> None:
     parser.add_argument("--min-seconds", type=float, default=3.0, help="shortest clear stretch to use")
     parser.add_argument("--run", type=Path, default=None,
                         help="the finished run's folder (default: out/<video name>; a run made with --out lives elsewhere)")
+    parser.add_argument("--stills", type=Path, default=None,
+                        help="where to save each scored stretch as images, camera and every method (default: <run>/heldout)")
     args = parser.parse_args()
 
     folder = args.run if args.run is not None else ROOT / "out" / args.video.stem
@@ -66,6 +68,7 @@ def main() -> None:
         static=[frames(stretch) for stretch in args.static],
         min_seconds=args.min_seconds,
         exposure=exposure,
+        stills=args.stills if args.stills is not None else folder / "heldout",
     )
     report["session"] = {"video": args.video.name, "sha256": receipt["source"]["sha256"],
                          "minutes": round(info.duration / 60, 1)}
