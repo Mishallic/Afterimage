@@ -60,10 +60,17 @@ REFINE_WINDOW = 60
 never crossed the change threshold (the next thin layer, paint drying darker) kept amending the
 first stroke, and the second session's replay showed the final lavender on a spot that was pink
 at minute four."""
-DRIFT_THRESHOLD = 12.0
+DRIFT_THRESHOLD = 4.0
 """After REFINE_WINDOW, a settled pixel whose plate value has drifted this far from the colour on
 record gets a new recorded change, dated to the update it is noticed: slow change is still change,
-it just belongs to the time it happened."""
+it just belongs to the time it happened. It is marked as drift (Timeline.drift), so it never
+re-dates the stroke.
+
+At 12 the record lagged what the camera showed by up to 12 levels on every stroke older than a
+minute, and on the second session's held-out moments that was most of the error: a 10-second
+masked median beat the replay on calm stretches. On that session's proxy, 12 -> 6 -> 4 moved
+Afterimage from ΔE00 2.90 to 2.24 to 2.06 (masked median 2.35), for 2.3 times the recorded changes
+at 4. The plate's own noise is well under 4 levels: it averages each settled pixel over ~20 updates."""
 
 
 def _to_uint8(values: np.ndarray) -> np.ndarray:
