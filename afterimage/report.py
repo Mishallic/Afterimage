@@ -125,13 +125,13 @@ document.getElementById("proof").onclick = e => {
   const gx = Math.min(receipt.width - 1, Math.floor(fx * receipt.width));
   const gy = Math.min(receipt.height - 1, Math.floor(fy * receipt.height));
   const frame = receipt.grid[gy * receipt.width + gx];
-  if (frame < 0) { when.textContent = "Bare canvas: never painted here."; moment.pause(); camdot.style.display = "none"; return; }
+  if (frame < 0) { when.textContent = "No stroke was recorded here."; moment.pause(); camdot.style.display = "none"; return; }
   // The change was first seen at `seconds`; the paint landed while the hand was still there, so start earlier.
   const seconds = frame / receipt.sample_fps, start = Math.max(seconds - receipt.lead_s, 0);
   const [a, b, c, d, e2, f, g, h, i] = receipt.to_camera, w = g * fx + h * fy + i;
   camdot.style.left = `${(a * fx + b * fy + c) / w * 100}%`; camdot.style.top = `${(d * fx + e2 * fy + f) / w * 100}%`;
   camdot.style.display = "block";
-  when.textContent = `Last changed ${clock(seconds)} into the session. Playing the camera from ${clock(start)}.`;
+  when.textContent = `Last stroke here at ${clock(seconds)} into the session. Playing the camera from ${clock(start)}.`;
   moment.currentTime = start;
   stopAt = seconds + receipt.tail_s;
   moment.muted = false;
