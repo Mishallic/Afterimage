@@ -151,9 +151,27 @@ inside a hidden window is missed (5.5% of pixels off) and caught when the method
 to peek (0.3%). On the synthetic session: Afterimage ΔE00 0.27, 0.35% of pixels clearly off,
 PSNR 39.6; masked median 0.74 / 1.14% / 28.4; temporal median 1.15 / 2.08% / 25.4.
 
-The critic is measured with `scripts/critic_probe.py`: hand crops cut from the footage with
-the SAM masks are planted into reconstructions, and Spark's recall and false-flag rate are
-reported. The loop's plumbing is covered by tests with SAM and Spark played by mocks.
+### The critic, measured
+
+`scripts/critic_probe.py` cuts hands and brushes out of a session's own footage with their SAM
+masks, pastes one into each of 20 rebuilds at a random spot, leaves 20 more alone, and asks
+Spark about them the way the runs do, two images a call
+([`eval/critic-session1-api-v3.md`](eval/critic-session1-api-v3.md),
+[`eval/critic-session2-api.md`](eval/critic-session2-api.md)). A plant counts as found when a
+box overlaps it (IoU ≥ 0.3); any other box is a false flag.
+
+| Session | Spark boxed | After the second look | False flags per image, before → after |
+|---|---|---|---|
+| 1 (blue on white) | 9 of 20 | 9 of 20 | 0.40 → 0.10 |
+| 2 (pink, close to skin) | 6 of 20 | 4 of 20 | 0.70 → 0.12 |
+
+Read plainly: the critic is a net under the masks, not a guarantee. SAM's masks do the
+removing; Spark catches about half of what slips past them on a painting that doesn't look like
+skin, and a third or less on one that does. The second look on a crop of the rebuild alone is
+what makes acting on its answers safe: it removes most false flags while keeping the true finds
+on session 1. Asked about six images in one call instead of two, it boxed 4 of session 2's
+plants instead of 6. On both sessions' final runs the critic found nothing to fix. The loop's plumbing is covered by
+tests with SAM and Spark played by mocks.
 
 ## Run it
 
