@@ -178,8 +178,11 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 ## Limitations
 
 - A fixed camera is required. Handheld footage isn't supported.
-- A shadow that holds still for longer than the persistence and never lifts is kept as paint
-  until the critic catches it. Side lighting avoids it; the capture notes say how.
+- A shadow the painter casts that holds still past the persistence is recorded like paint. If
+  it lifts within a minute, both changes are dropped. If it stays longer, it shows in the
+  timelapse until it lifts (on the second session, an arm's shadow along the bottom edge, for
+  about two seconds of the timelapse); one that never lifts stays until the critic catches it.
+  Side lighting avoids it; the capture notes say how.
 - The camera's colour is not the pigment's colour. Steady light; a grey card helps. Lock the
   phone's exposure and white balance: the pipeline undoes auto-exposure drift, but what it can't
   see under the painter it can't correct.
@@ -188,7 +191,7 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 - Thin brushes under motion blur can slip past the masks; persistence and the critic are the net.
 - A wash close to the canvas colour (a pale pink ground over white) sits under the change
   threshold and registers late, or only where it is strongest, until stronger paint arrives.
-- In open-weight mode the critic's box is followed within its 30-minute stretch of the session
+- In open-weight mode the critic's box is followed within its 10-minute stretch of the session
   (the tracker works in chunks); a leftover that outlasts the stretch is caught again by the
   next round, not carried over.
 - Works for flat work under a fixed camera: paper, canvas, boards.
