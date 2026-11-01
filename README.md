@@ -159,8 +159,10 @@ python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners
 outputs and caches somewhere other than `out/<session>`. The results page is
 `out/<session>/index.html`; it runs from disk. Next to it: `receipt.json`, `stats.json`,
 `frames.json` (per frame: share covered, mask stillness, disagreement with the plate, exposure
-gain) and the request ledger. The core is numpy plus ffmpeg pipes (no OpenCV), so it runs on
-Windows N editions too. Tests: `python -m unittest discover -s tests -t .`
+gain) and the request ledger. `python scripts/afterimage_share.py out/<session> share/<session>`
+copies the page into a folder any static host can serve, with the footage behind the receipt
+re-encoded at the size the page shows it. The core is numpy plus ffmpeg pipes (no OpenCV), so it
+runs on Windows N editions too. Tests: `python -m unittest discover -s tests -t .`
 
 Open weights instead of the API (needs Hugging Face access to `facebook/sam3.1`, a Modal
 account and a Baseten key):
