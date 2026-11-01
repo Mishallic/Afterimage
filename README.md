@@ -27,10 +27,9 @@ processed both ways, and each run's receipt names the path that made it.
 - **A checkable record.** `receipt.json` holds the footage hash, the hashes of every cached
   model response, the parameters, and a hash chain over every output frame.
   `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
-  and compares. On the first real session (84 minutes, 5,023 output frames) it passed in
-  about 85 minutes with no API key, every frame bit for bit, both before and after the Oct 31
-  change to how the record keeps each stroke's colour. Checkable, not proof: it shows
-  the output came from this footage through this code, nothing more.
+  and compares. It passes on both sessions' final runs (84 minutes and 5,023 output frames;
+  52 minutes and 3,120), every frame bit for bit, with no API key. Checkable, not proof: it
+  shows the output came from this footage through this code, nothing more.
 
 ## How it uses Meta's models
 
@@ -98,26 +97,39 @@ The hard cases, and what handles them:
 
 ## Evaluation
 
-### On a real session
+### On two real sessions
 
-Session 1: 84 minutes of acrylic on canvas, a phone on a tripod, 5,023 frames at 1 fps
-([`eval/session1-api-v3.md`](eval/session1-api-v3.md)). The step-back protocol, described
-below, found 14 stretches where nobody was over the canvas and it held still. Each was hidden
-from every method, rebuilt from the rest of the session, and scored against what the camera saw.
+Two sessions of acrylic on canvas, filmed by a phone on a tripod and processed at 1 frame a
+second: session 1 is 84 minutes (5,023 frames), session 2 is 52 minutes (3,120 frames)
+([`eval/session1-api-v3.md`](eval/session1-api-v3.md), [`eval/session2-api.md`](eval/session2-api.md)).
+The step-back protocol, described below, finds the stretches where nobody was over the canvas
+and it held still: 14 in session 1, 63 in session 2. Each was hidden from every method, rebuilt
+from the rest of the session, and scored against what the camera saw.
 
-| Method | ΔE00, lower is better | Pixels clearly off (ΔE00 > 5) | PSNR (dB) |
-|---|---|---|---|
-| Afterimage | **3.60** | 20.9% | **26.0** |
-| Masked median (Loomis-style, same SAM masks) | 4.01 | **18.4%** | 25.7 |
-| Temporal median (no masks) | 5.59 | 27.2% | 21.4 |
+| Session | Method | ΔE00, lower is better | Pixels clearly off (ΔE00 > 5) | PSNR (dB) |
+|---|---|---|---|---|
+| 1, 84 min | Afterimage | **2.92** | **16.0%** | **27.3** |
+| | Masked median (Loomis-style, same SAM masks) | 4.01 | 18.4% | 25.7 |
+| | Temporal median (no masks) | 5.59 | 27.2% | 21.4 |
+| 2, 52 min | Afterimage | **2.24** | **6.1%** | **29.2** |
+| | Masked median (Loomis-style, same SAM masks) | 2.54 | 8.4% | 29.2 |
+| | Temporal median (no masks) | 3.92 | 15.4% | 25.1 |
 
-Read honestly: Afterimage has the lowest average error, but the masked median is closer on 10
-of the 14 stretches. Afterimage's average comes from never breaking. The median's worst
-stretch, early on while the canvas changed fast, scores 21.4; Afterimage scores 1.6 there.
-One known cause of Afterimage's losses is the opening pale wash, pink over white, which sits
-under its change threshold until stronger paint arrives. Making each stroke's recorded colour
-follow what the camera keeps showing moved Afterimage from 3.87 / 24.4% / 25.6 dB to the row
-above.
+Read honestly: Afterimage has the lowest average error on both sessions, but stretch by
+stretch it beats the masked median about half the time (7 of 14, and 30 of 63). Its lead
+comes from never breaking. When the painter steps back after a long spell at the canvas, the
+median has nothing uncovered to work from: its worst stretches score 21.4 and 8.7, where
+Afterimage scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a copy of the
+camera and edges ahead. Afterimage's own worst stretches come early in each session, where bare
+canvas and a pale first wash sit under its change threshold: 5.5 against the median's 1.2 at
+3:32 into session 2.
+
+How it got here: session 1 scored 3.60 / 20.9% / 26.0 dB on Oct 31, and session 2 scored
+3.05 / 10.8% / 27.5 dB on the morning of Nov 1. Since then, exposure is measured on the room
+instead of the canvas, a change counts as transient only if it is undone within a minute, and
+the record follows a stroke's slow drift past 4 levels instead of 12. The last change did most
+of the work on session 2: the record had lagged what the camera showed on every stroke older
+than a minute.
 
 ### On synthetic scenes
 
