@@ -20,7 +20,7 @@ session here was processed.
 - **Pixel receipt.** Tap any spot on the finished painting and the camera footage of the last
   time that spot changed plays at natural speed, sound on, with the spot marked in the frame.
   The hand that painted it is right there.
-- **Underneath.** Drag to peel the painting back one layer of changes at a time, down to the
+- **Underneath.** Drag to peel the painting back one layer of strokes at a time, down to the
   bare canvas. Conservators find this under old paintings with X-rays and call it pentimento;
   here it falls out of the record.
 - **Ghost slider.** Fade the painter back in from 0% to 100%.

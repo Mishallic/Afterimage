@@ -65,7 +65,7 @@ TEMPLATE = """<!doctype html>
 
   <section class="panel">
     <h2>Underneath</h2>
-    <p class="hint">Drag to peel the painting back one layer of changes at a time, down to the bare canvas. Every layer is what the camera saw there before.</p>
+    <p class="hint">Drag to peel the painting back one layer of strokes at a time, down to the bare canvas. Every layer is what the camera saw there before.</p>
     <img id="under" src="__FINAL__" alt="The painting, peeled back" style="width: 100%; display: block; border-radius: 8px">
     <input id="peel" type="range" min="0" max="1" value="0">
     <p class="hint" id="underlabel"></p>
@@ -145,8 +145,8 @@ peel.max = under.length;
 const setPeel = () => {
   const n = Number(peel.value);
   underImg.src = n === 0 ? images.final : under[n - 1].file;
-  underLabel.textContent = n === 0 ? "The finished painting." : n === under.length ? "Bare canvas: every change undone."
-    : `${under[n - 1].k} layer${under[n - 1].k === 1 ? "" : "s"} of changes peeled away.`;
+  underLabel.textContent = n === 0 ? "The finished painting." : n === under.length ? "Bare canvas: every stroke undone."
+    : `${under[n - 1].k} layer${under[n - 1].k === 1 ? "" : "s"} of strokes peeled away.`;
 };
 peel.oninput = setPeel; setPeel();
 
