@@ -48,7 +48,7 @@ TEMPLATE = """<!doctype html>
 </head>
 <body>
 <main>
-  <header><h1>__TITLE__</h1><p>Made by hand. The painting stays. Every pixel is copied from a real frame: aligned and colour-matched, never invented.</p></header>
+  <header><h1>__TITLE__</h1><p>Made by hand. The painting stays. Every pixel comes from the camera's frames: aligned, colour-matched and averaged over a few frames, never invented.</p></header>
   <section class="grid" id="tiles"></section>
 
   <section class="panel">
