@@ -8,8 +8,8 @@ averaged over a few frames. No generative model touches the image. Nothing is in
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
 *Build for Your World*: I paint, and every process video I film is mostly my own elbow.
 Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
-weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten, which is how every
-session here was processed.
+weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. Both sessions here were
+processed both ways, and each run's receipt names the path that made it.
 
 ## What it does
 
@@ -18,8 +18,8 @@ session here was processed.
 - **Cameo.** You sit beside the canvas with a cup of tea while it fills in. The timelapse is
   projected into a real clip of the room (a labelled composite).
 - **Pixel receipt.** Tap any spot on the finished painting and the camera footage of the last
-  time that spot changed plays at natural speed, sound on, with the spot marked in the frame.
-  The hand that painted it is right there.
+  stroke there plays at natural speed, sound on, with the spot marked in the frame. The hand
+  that painted it is right there.
 - **Underneath.** Drag to peel the painting back one layer of strokes at a time, down to the
   bare canvas. Conservators find this under old paintings with X-rays and call it pentimento;
   here it falls out of the record.
@@ -58,9 +58,10 @@ footage ─┬─► proxy (1–2 fps) ─► Spark scan: what to track, where t
                                                                             ▼
                       clean plate: a pixel changes only after its new value holds
                       for the persistence (8 s) while uncovered; every change is
-                      recorded (pixel, first seen, before, after)
+                      recorded (pixel, first seen, before, after); a stroke's colour
+                      settles over its first minute, later drift is marked as drift
                                                                             │
-                      transient veto: a change undone within 5 min was a shadow,  ◄── Spark critic
+                      transient veto: a change undone within 1 min was a shadow,  ◄── Spark critic
                       a glint or a resting hand, not paint; both changes dropped        boxes → SAM /
                                                                             │           holds
                                                                             ▼
@@ -74,12 +75,19 @@ The hard cases, and what handles them:
 - **A painted hand, or a portrait.** SAM finds painted hands too. Real ones reach in past the
   canvas edge, move, and belong to a body; painted ones sit inside the canvas, stay put and
   outlast any pose ([`afterimage/occluders.py`](afterimage/occluders.py)). Only the real ones are removed.
-- **Shadows, glare, exposure drift.** Each frame is exposure-matched against a fixed
-  reference (the bare canvas, or paint that has stood for five minutes), never against the
-  drifting plate itself, and the 80th percentile of the per-pixel ratios is taken so that a
-  shadow over part of the canvas doesn't read as a darker exposure. A shadow that flickers
-  never commits; one that holds still commits and is vetoed when it lifts. A shadow that holds
-  still *and never lifts* is the known limitation (below).
+- **Shadows, glare, exposure drift.** The phone's auto-exposure and white balance are measured
+  on the room around the canvas: the median ratio over its lit pixels, with the painter masked
+  out. Measured on the canvas itself, a pink wash laid over the whole canvas read as the light
+  changing and was divided out. A canvas that fills the frame falls back to the bare canvas or
+  paint that has stood for five minutes, never the drifting plate itself. A shadow that flickers
+  never commits; one that holds still commits and is vetoed if it lifts within a minute. A
+  shadow that holds still *and never lifts* is the known limitation (below).
+- **A stroke that keeps changing.** Paint dries darker, and thin layers build up below the
+  change threshold. For its first minute a stroke's recorded colour follows what the camera
+  keeps showing; after that, drift past 4 levels (0-255) is recorded as a drift change, dated
+  when it happened. The replay applies it, so the colour on screen keeps up with the camera;
+  the receipt, Underneath and the stats ignore it, so a spot is still dated by the stroke that
+  painted it.
 - **Where the canvas is.** Spark's corners land within a few percent of the frame, which is an
   easel clamp across the top of every output. [`afterimage/corners.py`](afterimage/corners.py) moves
   each edge onto the strongest bright-to-dark step nearby with a robust line fit, on the

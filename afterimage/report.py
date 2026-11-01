@@ -53,7 +53,7 @@ TEMPLATE = """<!doctype html>
 
   <section class="panel">
     <h2>Pixel receipt</h2>
-    <p class="hint">Tap anywhere on the painting to play the camera's footage of the last time that spot changed, at natural speed, sound on.</p>
+    <p class="hint">Tap anywhere on the painting to play the camera's footage of the last stroke there, at natural speed, sound on.</p>
     <div class="two">
       <div>
         <div class="proof" id="proof"><img id="painting" src="__FINAL__" alt="The finished painting"><i class="dot" id="dot"></i></div>
