@@ -588,7 +588,8 @@ def clean(
     )
 
 
-CLEAN_CACHE_VERSION = 4
+CLEAN_CACHE_VERSION = 5
+"""5: drift records are marked as such (Timeline.drift)."""
 
 
 CACHE_REVERT_WINDOW = 300.0
@@ -633,10 +634,13 @@ def _save_cleaned(path: Path, cleaned: Cleaned) -> None:
     if vetoed is None:
         vetoed = np.zeros(len(cleaned.timeline), dtype=bool)
     path.parent.mkdir(parents=True, exist_ok=True)
+    drift = cleaned.timeline.drift
+    if drift is None:
+        drift = np.zeros(len(cleaned.timeline), dtype=bool)
     np.savez(
         path, version=np.int32(CLEAN_CACHE_VERSION), start=cleaned.start,
         pixel=cleaned.timeline.pixel, frame=cleaned.timeline.frame,
-        before=cleaned.timeline.before, after=cleaned.timeline.after, vetoed=vetoed,
+        before=cleaned.timeline.before, after=cleaned.timeline.after, drift=drift, vetoed=vetoed,
         occlusion=np.array(cleaned.occlusion, dtype=np.float32),
         stillness=np.array(cleaned.stillness, dtype=np.float32),
         disagreement=np.array(cleaned.disagreement, dtype=np.float32),
@@ -653,7 +657,9 @@ def vetoed_again(cleaned: Cleaned, params: Params) -> Cleaned:
 def _load_cleaned(path: Path) -> Cleaned:
     with np.load(path) as data:
         start = data["start"]
-        timeline = Timeline(start.shape[:2], data["pixel"], data["frame"], data["before"], data["after"])
+        drift = data["drift"] if "drift" in data.files else None
+        timeline = Timeline(start.shape[:2], data["pixel"], data["frame"], data["before"], data["after"],
+                            drift if drift is not None and drift.any() else None)
         vetoed = data["vetoed"]
         return Cleaned(
             start, timeline, timeline.without(vetoed), int(vetoed.sum()),
@@ -793,7 +799,8 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
         "critic": {"rounds": rounds, "min_confidence": critic.MIN_CONFIDENCE},
         "meta_calls": ledger.summary(out / LEDGER),
         "kept_as_painted": kept_as_painted,
-        "timeline": {"changes": len(cleaned.timeline), "vetoed": cleaned.vetoed, "kept": len(cleaned.kept)},
+        "timeline": {"changes": len(cleaned.timeline), "vetoed": cleaned.vetoed, "kept": len(cleaned.kept),
+                     "kept_drift": 0 if cleaned.kept.drift is None else int(cleaned.kept.drift.sum())},
         "output": {
             "frames": len(cleaned.occlusion),
             "size": list(geometry.size),

@@ -127,6 +127,37 @@ class TimelineTest(unittest.TestCase):
         )
         np.testing.assert_array_equal(timeline.painted_at(), [[5, -1], [-1, 2]])
 
+    def test_drift_is_replayed_but_is_not_a_stroke(self) -> None:
+        # Pixel 0: stroke to A at 1, drift A -> A' at 70, stroke to B at 90, drift B -> B' at 200.
+        bare, a, a2, b, b2 = (228, 228, 228), (10, 10, 10), (16, 16, 16), (90, 90, 90), (96, 96, 96)
+        timeline = Timeline(
+            (1, 2), np.array([0, 0, 0, 0], np.int32), np.array([1, 70, 90, 200], np.int32),
+            np.array([bare, a, a2, b], np.uint8), np.array([a, a2, b, b2], np.uint8),
+            np.array([False, True, False, True]),
+        )
+        initial = np.full((1, 2, 3), bare, np.uint8)
+        frames = list((canvas.copy(), changed.copy()) for canvas, changed in timeline.replay(initial, 201))
+        np.testing.assert_array_equal(frames[70][0][0, 0], a2, "the replay shows the drift")
+        np.testing.assert_array_equal(frames[200][0][0, 0], b2)
+        self.assertFalse(frames[70][1].any(), "drift isn't painting")
+        self.assertTrue(frames[90][1][0, 0])
+        np.testing.assert_array_equal(timeline.painted_at(), [[90, -1]], "dated by the last stroke")
+        np.testing.assert_array_equal(timeline.depth(), [[2, 0]])
+        final = frames[-1][0]
+        layers = [canvas.copy() for canvas in timeline.peel(initial, final, 2)]
+        np.testing.assert_array_equal(layers[0][0, 0], a2, "one stroke off: A as it last looked")
+        np.testing.assert_array_equal(layers[1][0, 0], bare)
+        kept = timeline.without(np.array([False, False, False, True]))
+        np.testing.assert_array_equal(kept.drift, [False, True, False])
+        self.assertIsNone(timeline.without(np.array([False, True, False, True])).drift)
+
+    def test_concat_marks_drift_chunks(self) -> None:
+        colours = np.zeros((2, 3), np.uint8)
+        pixels, frames = np.array([0, 1], np.int32), np.array([3, 4], np.int32)
+        joined = Timeline.concat((1, 2), [(pixels, frames, colours, colours, False), (pixels, frames + 70, colours, colours, True)])
+        np.testing.assert_array_equal(joined.drift, [False, False, True, True])
+        self.assertIsNone(Timeline.concat((1, 2), [(pixels, frames, colours, colours)]).drift)
+
 
 if __name__ == "__main__":
     unittest.main()

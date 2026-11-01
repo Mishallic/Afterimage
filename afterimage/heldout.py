@@ -51,7 +51,8 @@ def false_commit_rate(timeline: Timeline, windows: list[tuple[int, int]], fps: f
     minutes = sum(stop - start for start, stop in windows) / fps / 60
     if not minutes:
         return 0.0
-    committed = sum(int(((timeline.frame >= start) & (timeline.frame < stop)).sum()) for start, stop in windows)
+    strokes = timeline.strokes()
+    committed = sum(int(((strokes.frame >= start) & (strokes.frame < stop)).sum()) for start, stop in windows)
     return 100 * committed / (timeline.shape[0] * timeline.shape[1]) / minutes
 
 

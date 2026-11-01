@@ -87,8 +87,9 @@ def pick_keyframes(
              if run[index] >= persist_frames and (index == frames - 1 or not still[index + 1])]
     rests.sort(key=lambda index: -run[index])
     picks = [last_clear(occlusion, disagreement)]
-    if len(kept):
-        picks.append(int(np.bincount(kept.frame, minlength=frames).argmax()))
+    strokes = kept.strokes()
+    if len(strokes):
+        picks.append(int(np.bincount(strokes.frame, minlength=frames).argmax()))
     gap = round(GAP_SECONDS * fps)
     for index in rests:
         if len(picks) >= count:
@@ -150,12 +151,14 @@ def arrival_frame(
     A change is recorded from the frame its new value first held still and committed
     persist_frames later, so whatever put it there was in view for that whole stretch. The
     typical arrival of the latest changes under the box, plus half the persistence, lands inside
-    it. The keyframe itself when nothing under the box ever changed.
+    it. The keyframe itself when nothing under the box ever changed. Drift records are left out:
+    nothing arrived with them.
     """
-    latest = latest_changes(kept, box, keyframe, size)
+    strokes = kept.strokes()
+    latest = latest_changes(strokes, box, keyframe, size)
     if not len(latest):
         return keyframe
-    arrived = int(np.median(kept.frame[latest])) + persist_frames // 2
+    arrived = int(np.median(strokes.frame[latest])) + persist_frames // 2
     return int(min(max(arrived, 0), keyframe))
 
 

@@ -262,7 +262,8 @@ class CleanPlate:
         self._blind = 0
         """Updates skipped in a row because the frame was no view of the canvas (see MAX_DISAGREEMENT)."""
         self._updates = 0
-        self._commits: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+        self._commits: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, bool]] = []
+        """(pixels, update per pixel, before, after, is drift) chunks: see Timeline.drift."""
         self._recorded = self._clean.copy()
         """The colour each pixel's latest recorded change says it has (see REFINE_THRESHOLD)."""
         self._entry_chunk = np.full(initial_canvas.shape[:2], -1, dtype=np.int32)
@@ -332,6 +333,7 @@ class CleanPlate:
                 self._since.reshape(-1)[pixels],
                 _to_uint8(self._clean.reshape(-1, 3)[pixels]),
                 after,
+                False,
             ))
             self._recorded.reshape(-1, 3)[pixels] = after
             self._entry_chunk.reshape(-1)[pixels] = len(self._commits) - 1
@@ -350,7 +352,8 @@ class CleanPlate:
 
         Within REFINE_WINDOW updates of its commit, a stroke's recorded colour is amended to the
         plate's (REFINE_THRESHOLD). After that, drift past DRIFT_THRESHOLD is recorded as a new
-        change at this update, so it appears in the replay when it happened, not at the first stroke.
+        change at this update, so it appears in the replay when it happened, not at the first
+        stroke. That change is marked as drift: it isn't a stroke, so it doesn't re-date the pixel.
         """
         drift = np.zeros(settled.shape, dtype=np.float32)
         tracked = settled & (self._entry_chunk >= 0)
@@ -375,13 +378,13 @@ class CleanPlate:
                 np.full(len(pixels), self._updates, dtype=np.int32),
                 _to_uint8(self._recorded.reshape(-1, 3)[pixels]),
                 after,
+                True,
             ))
             self._recorded.reshape(-1, 3)[pixels] = after
             self._entry_chunk.reshape(-1)[pixels] = len(self._commits) - 1
             self._entry_pos.reshape(-1)[pixels] = np.arange(len(pixels), dtype=np.int32)
             self._committed_at.reshape(-1)[pixels] = self._updates
             self._reference.reshape(-1, 3)[pixels] = self._clean.reshape(-1, 3)[pixels]
-            self.painted_at.reshape(-1)[pixels] = self._updates
 
     def _match_exposure(self, current: np.ndarray, visible: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """Undo phone auto-exposure and white-balance drift, using the uncovered canvas.

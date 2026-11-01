@@ -22,25 +22,36 @@ class Timeline:
     frame: np.ndarray
     before: np.ndarray
     after: np.ndarray
+    drift: np.ndarray | None = None
+    """True for a change that records slow drift on a settled pixel rather than a stroke (see
+    cleanplate.DRIFT_THRESHOLD). The replay applies it, so the colour on screen keeps up with
+    what the camera shows; it doesn't date the pixel for the receipt, count as a layer
+    Underneath or count as painting. None means every change is a stroke."""
 
     @classmethod
-    def concat(
-        cls, shape: tuple[int, int], chunks: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]
-    ) -> Timeline:
-        """Join (pixels, update per pixel, before, after) chunks."""
+    def concat(cls, shape: tuple[int, int], chunks: list[tuple]) -> Timeline:
+        """Join (pixels, update per pixel, before, after[, is drift]) chunks."""
         if not chunks:
             empty = np.zeros(0, dtype=np.int32)
             return cls(shape, empty, empty, np.zeros((0, 3), np.uint8), np.zeros((0, 3), np.uint8))
+        drift = np.concatenate([np.full(len(chunk[0]), len(chunk) > 4 and bool(chunk[4])) for chunk in chunks])
         return cls(
             shape,
-            np.concatenate([pixels for pixels, _, _, _ in chunks]).astype(np.int32),
-            np.concatenate([frames for _, frames, _, _ in chunks]).astype(np.int32),
-            np.concatenate([before for _, _, before, _ in chunks]),
-            np.concatenate([after for _, _, _, after in chunks]),
+            np.concatenate([chunk[0] for chunk in chunks]).astype(np.int32),
+            np.concatenate([chunk[1] for chunk in chunks]).astype(np.int32),
+            np.concatenate([chunk[2] for chunk in chunks]),
+            np.concatenate([chunk[3] for chunk in chunks]),
+            drift if drift.any() else None,
         )
 
     def __len__(self) -> int:
         return len(self.pixel)
+
+    def strokes(self) -> Timeline:
+        """The changes that are strokes, without the drift records."""
+        if self.drift is None:
+            return self
+        return self.without(self.drift)
 
     def transients(self, *, threshold: float, window: int) -> np.ndarray:
         """Changes that a later change undid within `window` updates, plus the undoing change.
@@ -74,53 +85,63 @@ class Timeline:
 
     def without(self, dropped: np.ndarray) -> Timeline:
         keep = ~dropped
-        return Timeline(self.shape, self.pixel[keep], self.frame[keep], self.before[keep], self.after[keep])
+        drift = None if self.drift is None else self.drift[keep]
+        if drift is not None and not drift.any():
+            drift = None
+        return Timeline(self.shape, self.pixel[keep], self.frame[keep], self.before[keep], self.after[keep], drift)
 
     def painted_at(self) -> np.ndarray:
-        """Update at which each pixel last changed for good; -1 if it never did."""
+        """Update at which each pixel's last stroke began; -1 if it never had one. Drift doesn't count."""
+        strokes = self.strokes()
         result = np.full(self.shape[0] * self.shape[1], -1, dtype=np.int32)
-        np.maximum.at(result, self.pixel, self.frame)
+        np.maximum.at(result, strokes.pixel, strokes.frame)
         return result.reshape(self.shape)
 
     def depth(self) -> np.ndarray:
-        """How many changes each pixel went through."""
+        """How many strokes each pixel went through."""
         counts = np.zeros(self.shape[0] * self.shape[1], dtype=np.int32)
-        np.add.at(counts, self.pixel, 1)
+        np.add.at(counts, self.strokes().pixel, 1)
         return counts.reshape(self.shape)
 
     def peel(self, initial: np.ndarray, final: np.ndarray, layers: int) -> Iterator[np.ndarray]:
-        """The painting with its last k changes undone, for k = 1..layers: what's underneath.
+        """The painting with its last k strokes undone, for k = 1..layers: what's underneath.
 
-        Each step takes every pixel back to the colour it had after the change before, so one
-        layer of changes comes off everywhere at once; a pixel with k changes or fewer is down
-        to the bare canvas. Conservators find this under old paintings with X-rays and call it
-        pentimento; here it's a by-product of the record. The array yielded is reused.
+        Each step takes every pixel back to the colour it had just before its next stroke from
+        the end (drift included), so one layer of strokes comes off everywhere at once; a pixel
+        with k strokes or fewer is down to the bare canvas. Conservators find this under old
+        paintings with X-rays and call it pentimento; here it's a by-product of the record. The
+        array yielded is reused.
         """
         order = np.lexsort((self.frame, self.pixel))
         pixel, after = self.pixel[order], self.after[order]
-        starts = np.flatnonzero(np.r_[True, pixel[1:] != pixel[:-1]])
-        counts = np.repeat(np.diff(np.r_[starts, len(pixel)]), np.diff(np.r_[starts, len(pixel)]))
-        from_end = counts - 1 - (np.arange(len(pixel)) - np.repeat(starts, np.diff(np.r_[starts, len(pixel)])))
+        stroke = np.ones(len(pixel), dtype=bool) if self.drift is None else ~self.drift[order]
+        first = np.r_[True, pixel[1:] != pixel[:-1]]
+        starts = np.flatnonzero(first)
+        group_end = np.repeat(np.r_[starts[1:], len(pixel)], np.diff(np.r_[starts, len(pixel)]))
+        to_come = np.r_[np.cumsum(stroke[::-1])[::-1], 0]
+        from_end = to_come[:-1] - to_come[group_end] - 1  # for a stroke: strokes after it on its pixel
         canvas = final.copy()
         flat, bare = canvas.reshape(-1, 3), initial.reshape(-1, 3)
         for k in range(1, layers + 1):
-            shown = from_end == k
-            flat[pixel[shown]] = after[shown]
-            gone = (counts == k) & (from_end == 0)
-            flat[pixel[gone]] = bare[pixel[gone]]
+            peeled = np.flatnonzero(stroke & (from_end == k - 1))
+            down = first[peeled]
+            flat[pixel[peeled[down]]] = bare[pixel[peeled[down]]]
+            flat[pixel[peeled[~down]]] = after[peeled[~down] - 1]
             yield canvas
 
     def replay(self, initial: np.ndarray, frames: int) -> Iterator[tuple[np.ndarray, np.ndarray]]:
-        """(canvas, pixels that changed this update) for each update. The canvas array is reused."""
+        """(canvas, pixels a stroke changed this update) for each update. Drift records are applied
+        to the canvas but not marked as changed. The canvas array is reused."""
         canvas = initial.copy()
         flat = canvas.reshape(-1, 3)
         order = np.argsort(self.frame, kind="stable")
         pixel, frame, after = self.pixel[order], self.frame[order], self.after[order]
+        stroke = np.ones(len(pixel), dtype=bool) if self.drift is None else ~self.drift[order]
         bounds = np.searchsorted(frame, np.arange(frames + 1))
         for update in range(frames):
             changed = np.zeros(self.shape[0] * self.shape[1], dtype=bool)
             low, high = bounds[update], bounds[update + 1]
             if high > low:
                 flat[pixel[low:high]] = after[low:high]
-                changed[pixel[low:high]] = True
+                changed[pixel[low:high][stroke[low:high]]] = True
             yield canvas, changed.reshape(self.shape)

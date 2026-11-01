@@ -192,6 +192,10 @@ class SlowDriftTest(unittest.TestCase):
         self.assertGreater(len(frames), 1, "the slow change is on record")
         self.assertGreater(int(frames[1]), drift_from, "dated when it happened")
         self.assertLessEqual(int(np.abs(afters[-1] - grey).max()), 14, f"and it ends near the new colour: {afters[-1]}")
+        drift = timeline.drift[spot][order]
+        self.assertFalse(drift[0], "the stroke is a stroke")
+        self.assertTrue(drift[1:].all(), "the slow change is marked as drift")
+        self.assertEqual(int(timeline.painted_at()[8, 10]), 5, "the receipt still points at the stroke")
 
 
 class SurroundExposureTest(unittest.TestCase):
