@@ -16,6 +16,19 @@ def order_corners(points: np.ndarray) -> np.ndarray:
     ])
 
 
+def corners_at(corners, moves, index: int):
+    """The canvas corners in frame `index`: those of the last move at or before it, else `corners`.
+
+    `moves` are (first frame, corners) in frame order: where the canvas went when the easel was knocked.
+    """
+    found = corners
+    for frame, moved in moves:
+        if frame > index:
+            break
+        found = moved
+    return found
+
+
 def corners_from_mask(mask: np.ndarray) -> np.ndarray | None:
     """Corners of a roughly rectangular mask (such as SAM's "canvas"), taken as extreme points."""
     ys, xs = np.nonzero(mask)

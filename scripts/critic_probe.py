@@ -96,7 +96,7 @@ def main() -> None:
     wanted = sorted(set(shown + donors))
     pairs = dict(zip(wanted, critic.pairs(
         proxy, wanted, cleaned.start, cleaned.kept, len(cleaned.occlusion),
-        fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
+        fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size, moves=params.moves,
     )))
 
     def tool_masks(frame: int):
@@ -105,7 +105,7 @@ def main() -> None:
             if key.split(":")[0] in tools:
                 found = np.zeros((proxy_size[1], proxy_size[0]), dtype=bool)
                 blob.paste_into(found)
-                view = geometry.view_mask(found)
+                view = geometry.view_mask(found, frame)
                 if view is not None and view.any():
                     yield view
 

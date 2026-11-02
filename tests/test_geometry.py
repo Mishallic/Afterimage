@@ -73,6 +73,29 @@ class GeometryTest(unittest.TestCase):
             self.assertLessEqual(abs(rows.min() - 60) + abs(rows.max() + 1 - 140), 4)
             self.assertLessEqual(abs(cols.min() - 80) + abs(cols.max() + 1 - 200), 4)
 
+    def test_ffmpeg_follows_the_canvas_where_it_moved(self) -> None:
+        # The easel knocked twice: frames 0-2 at the first corners, 3-4 moved, 5 on moved again.
+        canvas = canvas_image()
+        rect = np.array([[0, 0], [CANVAS[0], 0], [CANVAS[0], CANVAS[1]], [0, CANVAS[1]]], dtype=np.float64)
+        shifted = TILTED + np.array([18.0, -6.0])
+        turned = TILTED + np.array([[30, 4], [26, 10], [20, 6], [24, 0]], dtype=np.float64)
+        places = [TILTED] * 3 + [shifted] * 2 + [turned] * 2
+        fractions = [corners / np.array(VIEW, dtype=np.float64) for corners in (TILTED, shifted, turned)]
+        moves = ((3, tuple(map(tuple, fractions[1]))), (5, tuple(map(tuple, fractions[2]))))
+        with tempfile.TemporaryDirectory() as folder:
+            video = Path(folder) / "view.mp4"
+            with media.FrameWriter(video, VIEW, fps=2) as writer:
+                for corners in places:
+                    writer.write(Warper(homography(corners, rect), VIEW, canvas.shape[:2]).image(canvas))
+            followed = list(media.read_frames(video, fps=2, size=CANVAS, corners=fractions[0], source=VIEW, moves=moves))
+            fixed = list(media.read_frames(video, fps=2, size=CANVAS, corners=fractions[0], source=VIEW))
+        self.assertEqual(len(followed), len(places))
+        inner = (slice(10, -10), slice(10, -10))
+        error = [np.abs(frame.astype(np.int16) - canvas.astype(np.int16))[inner].mean() for frame in followed]
+        self.assertLess(max(error), 5.0, error)
+        # Held at the first corners, the moved frames are visibly off.
+        self.assertGreater(np.abs(fixed[-1].astype(np.int16) - canvas.astype(np.int16))[inner].mean(), 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()

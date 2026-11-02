@@ -38,9 +38,13 @@ def to_camera(corners: tuple[tuple[float, float], ...] | None) -> list[float]:
 
 def receipt(
     painted_at: np.ndarray, *, sample_fps: float, corners: tuple[tuple[float, float], ...] | None = None,
-    width: int = 160,
+    width: int = 160, moves=(),
 ) -> dict:
-    """A small grid of "painted at" frame numbers for the match page's tap-to-see-the-moment."""
+    """A small grid of "painted at" frame numbers for the match page's tap-to-see-the-moment.
+
+    With `moves` (where the canvas went when the easel was knocked), `moves` holds the frame
+    each later position starts at and its own mapping, for spots painted after it.
+    """
     height = max(1, round(painted_at.shape[0] * width / painted_at.shape[1]))
     rows = ((np.arange(height) + 0.5) * painted_at.shape[0] / height).astype(int)
     cols = ((np.arange(width) + 0.5) * painted_at.shape[1] / width).astype(int)
@@ -52,5 +56,6 @@ def receipt(
         "lead_s": LEAD_SECONDS,
         "tail_s": TAIL_SECONDS,
         "to_camera": to_camera(corners),
+        "moves": [[int(frame), to_camera(moved)] for frame, moved in moves],
         "grid": grid.ravel().tolist(),
     }

@@ -128,7 +128,10 @@ document.getElementById("proof").onclick = e => {
   if (frame < 0) { when.textContent = "No stroke was recorded here."; moment.pause(); camdot.style.display = "none"; return; }
   // The change was first seen at `seconds`; the paint landed while the hand was still there, so start earlier.
   const seconds = frame / receipt.sample_fps, start = Math.max(seconds - receipt.lead_s, 0);
-  const [a, b, c, d, e2, f, g, h, i] = receipt.to_camera, w = g * fx + h * fy + i;
+  // Where the canvas stood when the stroke was made: the easel can have been knocked since.
+  let toCamera = receipt.to_camera;
+  for (const [first, matrix] of receipt.moves || []) if (frame >= first) toCamera = matrix;
+  const [a, b, c, d, e2, f, g, h, i] = toCamera, w = g * fx + h * fy + i;
   camdot.style.left = `${(a * fx + b * fy + c) / w * 100}%`; camdot.style.top = `${(d * fx + e2 * fy + f) / w * 100}%`;
   camdot.style.display = "block";
   when.textContent = `Last stroke here at ${clock(seconds)} into the session. Playing the camera from ${clock(start)}.`;

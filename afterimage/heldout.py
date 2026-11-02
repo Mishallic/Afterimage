@@ -94,7 +94,7 @@ def heldout_report(
             raise ValueError("finding clear windows needs masks; give them by hand instead")
         seconds = min(info.duration, params.seconds) if params.seconds else info.duration
         occlusion = [
-            0.0 if masks.get(index) is None else float(geometry.view_mask(masks[index]).mean())
+            0.0 if masks.get(index) is None else float(geometry.view_mask(masks[index], index).mean())
             for index in range(int(seconds * params.fps))
         ]
         windows = clear_windows(occlusion, min_frames=max(1, round(min_seconds * params.fps)))
@@ -127,7 +127,7 @@ def heldout_report(
             yield frame
 
     view_masks = (
-        everything if index in hidden else None if masks is None else geometry.view_mask(masks.get(index))
+        everything if index in hidden else None if masks is None else geometry.view_mask(masks.get(index), index)
         for index in count()
     )
     with closing(stream):

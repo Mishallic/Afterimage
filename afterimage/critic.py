@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 
 from . import imaging, media
-from .geometry import Warper, homography, order_corners
+from .geometry import Warper, corners_at, homography, order_corners
 from .sam import MAX_OBJECTS_PER_CALL
 from .spark import Defect
 from .timeline import Timeline
@@ -113,16 +113,20 @@ def pick_keyframes(
 def pairs(
     proxy: Path, keyframes: list[int], start: np.ndarray, kept: Timeline, frames: int,
     *, fps: float, corners: tuple[tuple[float, float], ...] | None, size: tuple[int, int],
-    proxy_size: tuple[int, int],
+    proxy_size: tuple[int, int], moves=(),
 ) -> list[tuple[np.ndarray, np.ndarray]]:
-    """(camera view, reconstruction) at each keyframe, both facing the canvas at `size`."""
-    if corners is None:
-        def view(frame: np.ndarray) -> np.ndarray:
+    """(camera view, reconstruction) at each keyframe, both facing the canvas at `size`.
+
+    The camera view is straightened where the canvas stood at that keyframe (`moves`).
+    """
+    def view(frame: np.ndarray, index: int) -> np.ndarray:
+        where = corners_at(corners, moves, index)
+        if where is None:
             return imaging.resize(frame, size)
-    else:
-        warper = Warper.facing(np.asarray(corners, dtype=np.float64) * proxy_size, size, (proxy_size[1], proxy_size[0]))
-        view = warper.image
-    raws = [view(frame) for frame in media.read_indices(proxy, keyframes, fps=fps, size=proxy_size)]
+        warper = Warper.facing(np.asarray(where, dtype=np.float64) * proxy_size, size, (proxy_size[1], proxy_size[0]))
+        return warper.image(frame)
+
+    raws = [view(frame, index) for frame, index in zip(media.read_indices(proxy, keyframes, fps=fps, size=proxy_size), keyframes)]
     wanted, rebuilt = set(keyframes), {}
     for index, (canvas, _) in enumerate(kept.replay(start, frames)):
         if index in wanted:
@@ -199,6 +203,7 @@ def check_crop(defect: Defect, pair: tuple[np.ndarray, np.ndarray]) -> np.ndarra
 def proxy_boxes(
     defects: Iterable[Defect], keyframes: list[int], corners: tuple[tuple[float, float], ...] | None,
     size: tuple[int, int], proxy_size: tuple[int, int], *, kept: Timeline | None = None, persist_frames: int = 0,
+    moves=(),
 ) -> list[tuple[int, tuple[int, int, int, int]]]:
     """Object defects as SAM box prompts: (session frame, box) in the proxy's camera-view pixels.
 
@@ -206,21 +211,21 @@ def proxy_boxes(
     mark has usually gone; a prompt there would track the paint underneath (on the first real
     session it tracked a painted blob for fifteen minutes). Given the change timeline, the
     prompt goes to the frame the box's content arrived (arrival_frame), when the brush or hand
-    that made it was still in view.
+    that made it was still in view. The box goes where the canvas stood in that frame (`moves`).
     """
-    matrix = _canvas_to_proxy(corners, size, proxy_size)
     boxes = []
     for defect in defects:
         if not defect.is_object:
             continue
+        frame = keyframes[defect.keyframe]
+        if kept is not None:
+            frame = arrival_frame(kept, defect.box, frame, size, persist_frames=persist_frames)
+        matrix = _canvas_to_proxy(corners_at(corners, moves, frame), size, proxy_size)
         left, top, right, bottom = defect.box
         points = np.array([[left, top, 1], [right, top, 1], [right, bottom, 1], [left, bottom, 1]], float) @ matrix.T
         points = points[:, :2] / points[:, 2:3]
         x0, y0 = (max(int(v), 0) for v in np.floor(points.min(axis=0)))
         x1, y1 = (min(int(v), limit) for v, limit in zip(np.ceil(points.max(axis=0)), proxy_size))
-        frame = keyframes[defect.keyframe]
-        if kept is not None:
-            frame = arrival_frame(kept, defect.box, frame, size, persist_frames=persist_frames)
         if x1 > x0 and y1 > y0:
             boxes.append((frame, (x0, y0, x1, y1)))
     return boxes[:MAX_OBJECTS_PER_CALL]

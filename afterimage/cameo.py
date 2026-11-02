@@ -196,10 +196,13 @@ def run_corners(run: Path) -> np.ndarray:
     """The canvas corners a finished run used (a run folder or its receipt.json), as fractions of
     the frame: right for a cameo clip filmed after the session without moving the phone."""
     path = run / "receipt.json" if run.is_dir() else run
-    corners = json.loads(path.read_text(encoding="utf-8"))["params"].get("corners")
+    params = json.loads(path.read_text(encoding="utf-8"))["params"]
+    corners = params.get("corners")
     if not corners:
         raise ValueError(f"{path} has no canvas corners: that run used the whole frame")
-    return np.asarray(corners, dtype=np.float64)
+    # A clip filmed after the session finds the canvas where it ended up, if the easel was knocked.
+    moves = params.get("moves") or []
+    return np.asarray(moves[-1][1] if moves else corners, dtype=np.float64)
 
 
 def mask_lookup(

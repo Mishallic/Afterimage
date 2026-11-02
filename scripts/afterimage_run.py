@@ -22,7 +22,7 @@ from afterimage.config import ROOT
 from afterimage.pipeline import Params, run
 
 
-def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
+def parse_args() -> tuple[Path, Params, str, bool, Path | None, bool]:
     defaults = Params()
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("video", type=Path)
@@ -39,6 +39,8 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
     parser.add_argument("--start", type=float, default=0.0, help="skip the first N seconds (camera handling)")
     parser.add_argument("--corners", nargs=4, metavar="X,Y", help="canvas corners as fractions of the frame")
     parser.add_argument("--aspect", type=float, help="canvas height / width, e.g. 1.5 for 40x60 portrait")
+    parser.add_argument("--fixed-canvas", action="store_true",
+                        help="keep the corners found at the start; by default the canvas is followed if the easel is knocked")
     parser.add_argument("--dilate", type=int, default=defaults.dilate, help="pixels to grow masks by")
     parser.add_argument("--persist-seconds", type=float, default=defaults.persist_seconds,
                         help="how long new paint must hold before it counts")
@@ -68,14 +70,14 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None]:
         output_fps=args.output_fps,
         exposure=args.exposure,
     )
-    return args.video, params, args.title, not args.no_reels, args.out
+    return args.video, params, args.title, not args.no_reels, args.out, not args.fixed_canvas
 
 
 def main() -> None:
-    video, params, title, reels, out = parse_args()
+    video, params, title, reels, out, follow_canvas = parse_args()
     started = time.perf_counter()
     out = out if out is not None else ROOT / "out" / video.stem
-    receipt = run(video, out, params, title=title, reels=reels)
+    receipt = run(video, out, params, title=title, reels=reels, follow_canvas=follow_canvas)
     print(f"{receipt['output']['frames']} frames, receipt {receipt['output']['canvas_sha256'][:16]}…")
     print(f"done in {time.perf_counter() - started:.0f}s -> {out / 'index.html'}")
 

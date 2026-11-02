@@ -53,7 +53,7 @@ footage ─┬─► proxy (1–2 fps) ─► Spark scan: what to track, where t
          │                        ▼
          │                      SAM 3.1: one mask stream per concept ──► painter masks
          │                                                                  │
-         └─► canvas view (corners snapped to the canvas edges, ffmpeg warp) ─┤
+         └─► canvas view (corners snapped, then followed; ffmpeg warp) ──────┤
                                                                             ▼
                       clean plate: a pixel changes only after its new value holds
                       for the persistence (8 s) while uncovered; every change is
@@ -89,8 +89,18 @@ The hard cases, and what handles them:
   painted it.
 - **Where the canvas is.** Spark's corners land within a few percent of the frame, which is an
   easel clamp across the top of every output. [`afterimage/corners.py`](afterimage/corners.py) moves
-  each edge onto the strongest bright-to-dark step nearby with a robust line fit, on the
+  each edge onto the innermost strong bright-to-dark step nearby with a robust line fit, on the
   clearest of the first frames, and keeps Spark's quad if no clean edge is found.
+- **A knocked easel.** On the third session the palette knife pushed the easel twice: 13 px two
+  minutes in and 25 more at half an hour (1080p), with a slow creep around both. Held at the
+  first corners, the painting slid in the output and a strip of wall grew down its left edge.
+  [`afterimage/track.py`](afterimage/track.py) matches the canvas every frame against a recent
+  clear view of itself: a shift, turn and scale fitted on its edges (strokes and border) by
+  Lucas-Kanade, with the painter masked out, the exposure taken out and new paint weighted
+  down. When it has moved by more than half a pixel and holds there for five frames, the
+  corners follow; ffmpeg straightens each frame with the corners in force, and the receipt
+  records every move, so verify re-derives the same frames. A canvas with too little paint to
+  place holds its corners, and then nothing on it can be misplaced either.
 - **The first frame.** Each pixel starts from its first uncovered value that holds steady, so
   a painter in frame 0 doesn't linger, and a stroke made in the first seconds still arrives
   as new paint.
@@ -209,9 +219,10 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 
 What the two sessions here taught:
 
-- **Phone on a tripod, canvas clamped, easel held.** Nothing in the shot may move but you. On the
-  first session the easel crept about 2 cm sideways under the brush, which the timelapse shows as
-  the painting sliding. Tighten the clamp on the canvas and tape the easel's feet to the floor.
+- **Phone on a tripod, canvas clamped, easel held.** On the first session the easel crept about
+  2 cm sideways under the brush, and on the third the palette knife knocked it twice. The canvas
+  is followed now, but a knock blurs a second or two and turns the paint's shine with it. Tighten
+  the clamp on the canvas and tape the easel's feet to the floor.
 - **Lock exposure and focus** on the canvas (long-press it on the phone screen).
 - **Soft light, high, from the phone's side of the room.** A lamp bounced off the wall or ceiling
   behind the phone keeps your shadow behind your arm and off the paint. Before starting, lay one
@@ -226,7 +237,8 @@ What the two sessions here taught:
 
 ## Limitations
 
-- A fixed camera and a canvas that stays put are required. Handheld footage isn't supported.
+- A fixed camera is required; handheld footage isn't supported. The canvas may move on the easel
+  and is followed, as long as it stays in view and has paint on it to be placed by.
 - A shadow the painter casts that holds still past the persistence is recorded like paint. If
   it lifts within a minute, both changes are dropped. If it stays longer, or the paint under it
   changes before it lifts, it shows until that spot is next seen clear: on the second session,

@@ -73,20 +73,39 @@ def _input_args(video: Path, seconds: float | None, start: float = 0.0) -> list[
     return args
 
 
-def perspective_filter(corners: np.ndarray, source: tuple[int, int]) -> str:
+def _filter_points(corners, source: tuple[int, int]) -> list[float]:
+    """x0, y0 ... x3, y3 in ffmpeg's order (top-left, top-right, bottom-left, bottom-right), in source pixels."""
+    points = order_corners(np.asarray(corners, dtype=np.float64) * np.asarray(source, dtype=np.float64))
+    top_left, top_right, bottom_right, bottom_left = points
+    return [*top_left, *top_right, *bottom_left, *bottom_right]
+
+
+def perspective_filter(corners: np.ndarray, source: tuple[int, int], moves=()) -> str:
     """ffmpeg's perspective filter: the canvas quadrilateral (fractions of the frame) sent to the frame's corners.
 
     ffmpeg resamples the full-resolution frame in C, well ahead of the numpy Warper, which stays
-    for masks and single frames.
+    for masks and single frames. With `moves` ((first frame, corners) where the canvas went),
+    each coordinate is an expression in the frame number, evaluated per frame.
     """
-    points = order_corners(np.asarray(corners, dtype=np.float64) * np.asarray(source, dtype=np.float64))
-    top_left, top_right, bottom_right, bottom_left = points
-    values = ":".join(f"{value:.3f}" for value in (*top_left, *top_right, *bottom_left, *bottom_right))
-    return f"perspective={values}:sense=source:interpolation=linear"
+    values = _filter_points(corners, source)
+    if not moves:
+        return "perspective=" + ":".join(f"{value:.3f}" for value in values) + ":sense=source:interpolation=linear"
+    after = [_filter_points(moved, source) for _, moved in moves]
+    expressions = []
+    for slot in range(len(values)):
+        # if(lte(in,first),before,if(lte(in,second),...,last)), commas escaped for the filtergraph:
+        # `in` counts the frames the fps filter passed on from 1, so frame index i is in = i + 1.
+        expression = f"{after[-1][slot]:.3f}"
+        for position in reversed(range(len(moves))):
+            earlier = values[slot] if position == 0 else after[position - 1][slot]
+            expression = f"if(lte(in\\,{moves[position][0]})\\,{earlier:.3f}\\,{expression})"
+        expressions.append(f"{'xy'[slot % 2]}{slot // 2}={expression}")
+    return "perspective=" + ":".join(expressions) + ":sense=source:interpolation=linear:eval=frame"
 
 
 def _sampling_filter(
     fps: float, size: tuple[int, int], corners: np.ndarray | None = None, source: tuple[int, int] | None = None,
+    moves=(),
 ) -> str:
     # Every output uses the same fps filter, so frame i sits at time i / fps everywhere
     # and SAM's frame indices line up with the full-resolution frames.
@@ -94,7 +113,7 @@ def _sampling_filter(
     if corners is not None:
         if source is None:
             raise ValueError("straightening needs the source frame size")
-        chain.append(perspective_filter(corners, source))
+        chain.append(perspective_filter(corners, source, moves))
     chain.append(f"scale={size[0]}:{size[1]}:flags=area")
     return ",".join(chain)
 
@@ -148,15 +167,16 @@ def _stream(args: list[str], size: tuple[int, int], label: str) -> Iterator[np.n
 
 def read_frames(
     video: Path, *, fps: float, size: tuple[int, int], seconds: float | None = None, start: float = 0.0,
-    corners: np.ndarray | None = None, source: tuple[int, int] | None = None,
+    corners: np.ndarray | None = None, source: tuple[int, int] | None = None, moves=(),
 ) -> Iterator[np.ndarray]:
     """Decode RGB frames, sampled exactly like make_proxy.
 
     With `corners` (the canvas quadrilateral as fractions of the `source` frame size), each frame
-    is the straightened canvas at `size` instead of the camera frame.
+    is the straightened canvas at `size` instead of the camera frame; with `moves` as well, from
+    each move's frame on, the canvas at that move's corners.
     """
     args = _input_args(video, seconds, start) + [
-        "-vf", _sampling_filter(fps, size, corners, source), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
+        "-vf", _sampling_filter(fps, size, corners, source, moves), "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1",
     ]
     return _stream(args, size, str(video))
 

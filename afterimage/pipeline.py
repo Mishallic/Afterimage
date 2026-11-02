@@ -27,7 +27,7 @@ from .cleanplate import CleanPlate, CleanPlateConfig, first_visible_canvas, surr
 from .config import find_tool
 from .corners import snap_corners
 from .devmasks import MotionMasker
-from .geometry import Warper, canvas_size, order_corners, polygon_mask
+from .geometry import Warper, canvas_size, corners_at, order_corners, polygon_mask
 from .ledger import file_sha256
 from .masks import resize_nearest
 from .occluders import Objects, occluders, painted
@@ -36,6 +36,7 @@ from .render import Sources, render
 from .report import write_report
 from .stats import StatsTracker
 from .timeline import Timeline
+from .track import follow
 
 RECEIPT_VERSION = 1
 START_SCAN_FRAMES = 120
@@ -60,6 +61,9 @@ class Params:
     """Seconds skipped at the start: the camera being handled before it settled."""
     corners: tuple[tuple[float, float], ...] | None = None
     """Canvas corners as fractions of the camera frame (top-left, top-right, bottom-right, bottom-left)."""
+    moves: tuple[tuple[int, tuple[tuple[float, float], ...]], ...] = ()
+    """Where the canvas went when the easel was knocked: from each (frame, corners) on, it sits at
+    those corners (fractions, like `corners`). Empty when it stayed put. See track.follow."""
     aspect: float | None = None
     dilate: int = 12
     persist_seconds: float = 8.0
@@ -100,6 +104,14 @@ class Params:
     def revert_frames(self) -> int:
         return round(self.revert_window * self.fps)
 
+    def corners_at(self, index: int) -> tuple[tuple[float, float], ...] | None:
+        """The canvas corners in frame `index`, after any moves up to it."""
+        return corners_at(self.corners, self.moves, index)
+
+    def positions(self) -> list[tuple[tuple[float, float], ...]]:
+        """Every place the canvas stood, the first one first."""
+        return ([self.corners] if self.corners else []) + [corners for _, corners in self.moves]
+
     def to_dict(self) -> dict:
         return json.loads(json.dumps(asdict(self)))
 
@@ -109,6 +121,10 @@ class Params:
         values = {key: value for key, value in data.items() if key in known}
         if values.get("corners") is not None:
             values["corners"] = tuple(tuple(point) for point in values["corners"])
+        if "moves" in values:
+            values["moves"] = tuple(
+                (int(frame), tuple(tuple(point) for point in corners)) for frame, corners in values["moves"]
+            )
         if "concepts" in values:
             values["concepts"] = tuple(values["concepts"])
         return cls(**values)
@@ -124,6 +140,9 @@ class Geometry:
     camera: tuple[int, int] = (0, 0)
     """The footage's own frame size, which ffmpeg straightens from."""
     corners: tuple[tuple[float, float], ...] | None = None
+    moves: tuple[tuple[int, tuple[tuple[float, float], ...]], ...] = ()
+    """Where the canvas went, as in Params: the output keeps the size the first corners give it."""
+    _warpers: dict = field(default_factory=dict, compare=False, repr=False)
 
     @classmethod
     def of(cls, info: media.VideoInfo, params: Params) -> Geometry:
@@ -134,7 +153,7 @@ class Geometry:
         corners = np.array(params.corners, dtype=np.float64) * frame_size
         size = canvas_size(corners, params.width, params.aspect)
         warper = Warper.facing(corners, size, (frame_size[1], frame_size[0]))
-        return cls(frame_size, size, warper, camera, params.corners)
+        return cls(frame_size, size, warper, camera, params.corners, params.moves)
 
     def frames(self, video: Path, params: Params) -> Iterator[np.ndarray]:
         """The output view of the footage, frame by frame.
@@ -145,17 +164,33 @@ class Geometry:
         corners = None if self.warper is None else np.asarray(self.corners, dtype=np.float64)
         return media.read_frames(
             video, fps=params.fps, size=self.size, seconds=params.seconds, start=params.start,
-            corners=corners, source=self.camera,
+            corners=corners, source=self.camera, moves=self.moves if self.warper is not None else (),
         )
 
-    def view(self, frame: np.ndarray) -> np.ndarray:
-        return self.warper.image(frame) if self.warper else frame
+    def warper_at(self, index: int | None) -> Warper | None:
+        """The Warper for frame `index`: the first corners' until the canvas moved."""
+        if self.warper is None or index is None:
+            return self.warper
+        corners = corners_at(None, self.moves, index)
+        if corners is None:
+            return self.warper
+        if corners not in self._warpers:
+            self._warpers[corners] = Warper.facing(
+                np.array(corners, dtype=np.float64) * self.frame_size, self.size, (self.frame_size[1], self.frame_size[0])
+            )
+        return self._warpers[corners]
 
-    def view_mask(self, mask: np.ndarray | None) -> np.ndarray | None:
+    def view(self, frame: np.ndarray, index: int | None = None) -> np.ndarray:
+        warper = self.warper_at(index)
+        return warper.image(frame) if warper else frame
+
+    def view_mask(self, mask: np.ndarray | None, index: int | None = None) -> np.ndarray | None:
+        """A camera-view mask of frame `index` in the output view (where the canvas stood then)."""
         if mask is None:
             return None
         mask = resize_nearest(mask, (self.frame_size[1], self.frame_size[0]))
-        return self.warper.mask(mask) if self.warper else mask
+        warper = self.warper_at(index)
+        return warper.mask(mask) if warper else mask
 
 
 @dataclass
@@ -223,7 +258,11 @@ def surround_exposure(
     if params.exposure != "wall" or not params.corners or masks is None or proxy_size is None:
         return None
     proxy, _ = _proxy(video, params, proxy_size, _sam_work(out, params, proxy_size))
-    canvas = polygon_mask(np.array(params.corners, dtype=np.float64) * proxy_size, (proxy_size[1], proxy_size[0]))
+    shape = (proxy_size[1], proxy_size[0])
+    # Wherever the canvas stood is left out: the wall it uncovered or covered by moving isn't the room's light.
+    canvas = np.zeros(shape, dtype=bool)
+    for corners in params.positions():
+        canvas |= polygon_mask(np.array(corners, dtype=np.float64) * proxy_size, shape)
     return surround_gains(media.read_frames(proxy, fps=params.fps, size=proxy_size), canvas, masks.get)
 
 
@@ -356,6 +395,42 @@ def snapped_corners(
     return tuple((round(float(x / frame_size[0]), 4), round(float(y / frame_size[1]), 4)) for x, y in snapped)
 
 
+FOLLOW_VERSION = 1
+"""Bumped when track.follow changes what it finds, so cached moves aren't reused."""
+
+
+def followed_moves(
+    video: Path, params: Params, info: media.VideoInfo, masks: dict[int, np.ndarray] | None, streams: list[dict],
+    out: Path,
+) -> tuple[tuple[int, tuple[tuple[float, float], ...]], ...]:
+    """Where the canvas went if the easel was knocked (track.follow), as fractions like `corners`.
+
+    Following it is a pass over the footage, kept next to the outputs: a re-run with the same
+    footage, corners and mask streams loads it.
+    """
+    frame_size = media.output_size(info, params.width)
+    stat = video.stat()
+    key = hashlib.sha256(json.dumps({
+        "version": FOLLOW_VERSION,
+        "video": [video.name, stat.st_size, int(stat.st_mtime)],
+        "sampling": [params.fps, params.width, params.start, params.seconds],
+        "corners": params.corners,
+        "streams": [stream.get("sha256") for stream in streams],
+    }, sort_keys=True).encode()).hexdigest()[:16]
+    cache = out / f"moves-{key}.json"
+    if cache.exists():
+        found = json.loads(cache.read_text(encoding="utf-8"))
+    else:
+        frames = media.read_frames(video, fps=params.fps, size=frame_size, seconds=params.seconds, start=params.start)
+        with closing(frames):
+            followed = follow(frames, np.asarray(params.corners, dtype=np.float64) * frame_size,
+                              None if masks is None else masks.get, log=print)
+        found = [[frame, [[round(float(x / frame_size[0]), 4), round(float(y / frame_size[1]), 4)] for x, y in corners]]
+                 for frame, corners in followed]
+        cache.write_text(json.dumps(found), encoding="utf-8")
+    return tuple((int(frame), tuple(tuple(point) for point in corners)) for frame, corners in found)
+
+
 def sam_occluders(
     video: Path, params: Params, info: media.VideoInfo, out: Path, *, box_streams: list[dict] = (),
 ) -> tuple[dict[int, np.ndarray], list[dict], list[str]]:
@@ -419,7 +494,7 @@ def critic_rounds(
             keyframes = [int(index) for index in recorded[number - 1]["keyframes"]]
         shown = critic.pairs(
             proxy, keyframes, cleaned.start, cleaned.kept, len(cleaned.occlusion),
-            fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size,
+            fps=params.fps, corners=params.corners, size=geometry.size, proxy_size=proxy_size, moves=params.moves,
         )
         if recorded is None:
             tag = critic.answer_tag(keyframes, spark.CRITIC_PROMPT, shown)
@@ -480,7 +555,7 @@ def critic_rounds(
         }
         boxes = critic.proxy_boxes(
             defects, keyframes, params.corners, geometry.size, proxy_size,
-            kept=cleaned.kept, persist_frames=params.persist_frames,
+            kept=cleaned.kept, persist_frames=params.persist_frames, moves=params.moves,
         )
         found: dict = {}
         if boxes:
@@ -543,7 +618,7 @@ def clean(
         with closing(frames()) as head:
             start = first_visible_canvas(
                 islice(head, START_SCAN_FRAMES),
-                (everything if index in hidden else geometry.view_mask(masks.get(index))
+                (everything if index in hidden else geometry.view_mask(masks.get(index), index)
                  for index in range(START_SCAN_FRAMES)),
                 dilate_px=params.dilate,
                 steady_frames=params.persist_frames,
@@ -565,7 +640,7 @@ def clean(
         raw = stack.enter_context(media.FrameWriter(raw_out, geometry.size, params.output_fps)) if raw_out else None
         for index, frame in enumerate(stack.enter_context(closing(frames()))):
             if masks is not None:
-                occluder = geometry.view_mask(masks.get(index))
+                occluder = geometry.view_mask(masks.get(index), index)
             elif motion is not None:
                 occluder = motion.mask(frame)
             else:
@@ -718,8 +793,14 @@ def underneath(cleaned: Cleaned, final: np.ndarray, out: Path, fps: float) -> li
     return files
 
 
-def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool = True) -> dict:
-    """Process one session into out/: videos, stats, reels, match page, receipt.json and the ledger of Meta calls."""
+def run(
+    video: Path, out: Path, params: Params, *, title: str = "", reels: bool = True, follow_canvas: bool = True,
+) -> dict:
+    """Process one session into out/: videos, stats, reels, match page, receipt.json and the ledger of Meta calls.
+
+    With `follow_canvas`, the canvas is followed through the footage (track.follow) when it has
+    corners and no moves were given.
+    """
     out.mkdir(parents=True, exist_ok=True)
     info = media.probe(video)
     masks, streams, kept_as_painted, scan, objects, proxy_size = None, [], [], None, None, None
@@ -743,6 +824,9 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
                 print("  canvas corners kept as Spark gave them: no clean edge found near them")
         if kept_as_painted:
             print(f"  kept as painted, not removed: {', '.join(kept_as_painted)}")
+    if follow_canvas and params.corners and not params.moves:
+        params = replace(params, moves=followed_moves(video, params, info, masks, streams, out))
+        print(f"  canvas followed: moved {len(params.moves)} time(s)" if params.moves else "  canvas followed: it stayed put")
 
     geometry = Geometry.of(info, params)
     exposure = surround_exposure(video, params, proxy_size if objects is not None else None, masks, out)
@@ -819,7 +903,7 @@ def run(video: Path, out: Path, params: Params, *, title: str = "", reels: bool 
     painted_at = cleaned.kept.painted_at()
     final_image = media.write_image(final, out / "final.jpg")
     timemap = media.write_image(time_map(painted_at, stats["frames"]), out / "timemap.jpg")
-    lookup = pixel_receipt(painted_at, sample_fps=params.fps, corners=params.corners)
+    lookup = pixel_receipt(painted_at, sample_fps=params.fps, corners=params.corners, moves=params.moves)
     stills = underneath(cleaned, final, out, params.output_fps)
     write_report(out, stats, title or video.stem, final_image, timemap, lookup, receipt, stills, models)
     return receipt
