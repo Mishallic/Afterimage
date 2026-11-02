@@ -181,7 +181,7 @@ copy .env.example .env                                                   # MODEL
 python scripts/afterimage_run.py data/session.mp4 --corners 0.12,0.08 0.88,0.07 0.9,0.95 0.1,0.96
 python scripts/afterimage_verify.py out/session/receipt.json --video data/session.mp4
 python scripts/afterimage_eval.py data/session.mp4 --static 300-360
-python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners ...
+python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners-from out/session --track sam --reveal
 ```
 
 `--no-scan` skips the Spark scan; `--corners` given by hand always win and are never snapped;
@@ -205,19 +205,42 @@ modal run scripts/sam_modal.py --video data/session.mp4 --concepts hand,person -
 python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...              # SPARK_PROVIDER=baseten in .env
 ```
 
+## Filming a session
+
+What the two sessions here taught:
+
+- **Phone on a tripod, canvas clamped, easel held.** Nothing in the shot may move but you. On the
+  first session the easel crept about 2 cm sideways under the brush, which the timelapse shows as
+  the painting sliding. Tighten the clamp on the canvas and tape the easel's feet to the floor.
+- **Lock exposure and focus** on the canvas (long-press it on the phone screen).
+- **Soft light, high, from the phone's side of the room.** A lamp bounced off the wall or ceiling
+  behind the phone keeps your shadow behind your arm and off the paint. Before starting, lay one
+  wet stroke and look at the phone screen: a shine on it will be in the output, so raise the
+  light or tip the canvas's top edge forward until it goes.
+- **A plain background.** A sheet pinned behind the easel hides posters and gives the exposure
+  measurement a clean surround.
+- **A quiet room.** The page plays each spot's moment with its sound: the brush is worth hearing.
+- **For a cameo,** stop recording when you finish, then film yourself sitting beside the canvas
+  without moving the phone, and pass `--corners-from` the run: the painting lands exactly on the
+  canvas.
+
 ## Limitations
 
-- A fixed camera is required. Handheld footage isn't supported.
+- A fixed camera and a canvas that stays put are required. Handheld footage isn't supported.
 - A shadow the painter casts that holds still past the persistence is recorded like paint. If
-  it lifts within a minute, both changes are dropped. If it stays longer, it shows in the
-  timelapse until it lifts (on the second session, an arm's shadow along the bottom edge, for
-  about two seconds of the timelapse); one that never lifts stays until the critic catches it.
-  Side lighting avoids it; the capture notes say how.
+  it lifts within a minute, both changes are dropped. If it stays longer, or the paint under it
+  changes before it lifts, it shows until that spot is next seen clear: on the second session,
+  where a shadow on pink paint reads as brown, the arm's shadow shows as brown patches for a few
+  seconds at a few moments of the 104-second timelapse. A longer veto window doesn't fix it:
+  tried on the session's record, 120 seconds dropped half of all changes and nearly doubled the
+  error where nobody covers the canvas. Muse Spark Open's critic boxed one patch (as a smear,
+  which is only recorded); Spark 1.3 passed over it. Light from the phone's side of the room
+  avoids most of it (see [Filming a session](#filming-a-session)).
 - The camera's colour is not the pigment's colour. Steady light; a grey card helps. Lock the
   phone's exposure and white balance: the pipeline undoes auto-exposure drift, but what it can't
   see under the painter it can't correct.
 - A lamp reflected off wet paint is in the footage, so it is in the output until the paint
-  dries. Put the lamp high and to the side, where the phone screen shows no hot spot.
+  dries. Put the lamp high, where the phone screen shows no hot spot on a wet stroke.
 - Thin brushes under motion blur can slip past the masks; persistence and the critic are the net.
 - A wash close to the canvas colour (a pale pink ground over white) sits under the change
   threshold and registers late, or only where it is strongest, until stronger paint arrives.
