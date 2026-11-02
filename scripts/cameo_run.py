@@ -72,7 +72,7 @@ def softened(timelapse: Path, frames: int) -> Path:
         subprocess.run([
             find_tool("ffmpeg"), "-y", "-v", "error", "-i", str(timelapse),
             "-vf", f"tmix=frames={frames}:weights='{weights}'",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", str(out),
+            "-c:v", "libx264", "-preset", "medium", "-crf", "16", "-pix_fmt", "yuv420p", *media.BT709, str(out),
         ], check=True)
     return out
 

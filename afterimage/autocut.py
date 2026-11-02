@@ -42,7 +42,8 @@ def auto_edl(stats: dict, *, layout: str = "vertical", fps: float = 30.0) -> Edi
     if stats.get("first_paint_frame") is not None:
         moments.append((stats["first_paint_frame"], "FIRST STROKE"))
     if stats["longest_fight_minutes"] >= 1:
-        worked = f"{stats['longest_fight_minutes']:.0f} MINUTES ON THE {stats['longest_fight'].upper()}"
+        minutes = round(stats["longest_fight_minutes"])
+        worked = f"{minutes} MINUTE{'' if minutes == 1 else 'S'} ON THE {stats['longest_fight'].upper()}"
         moments.append((stats["longest_fight_frame"], worked))
     for frame, text in moments:
         at = time_of(story, fps, frame)

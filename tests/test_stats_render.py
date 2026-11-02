@@ -61,6 +61,12 @@ class RenderTest(unittest.TestCase):
             self.assertEqual((info.width, info.height), (1920, 1080))
             self.assertAlmostEqual(info.duration, edl.duration, delta=0.5)
 
+    def test_one_minute_is_a_minute(self) -> None:
+        stats = {"frames": 600, "hook_frame": 10, "duration_s": 600.0, "first_paint_frame": 5,
+                 "longest_fight_minutes": 1.02, "longest_fight": "bottom right", "longest_fight_frame": 300}
+        captions = [caption.text for clip in auto_edl(stats).clips for caption in clip.captions]
+        self.assertIn("1 MINUTE ON THE BOTTOM RIGHT", captions)
+
 
 if __name__ == "__main__":
     unittest.main()

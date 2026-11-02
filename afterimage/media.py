@@ -14,6 +14,9 @@ import numpy as np
 from .config import find_tool
 from .geometry import order_corners
 
+BT709 = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]
+"""The colour tags of every video made from RGB frames (FrameWriter), for re-encodes to keep."""
+
 
 @dataclass(frozen=True)
 class VideoInfo:
@@ -289,7 +292,13 @@ class FrameWriter:
                 find_tool("ffmpeg"), "-y", "-v", "error",
                 "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{size[0]}x{size[1]}", "-r", str(fps),
                 "-i", "pipe:0",
+                # Say which colours these are. Untagged, players read HD video as BT.709 while
+                # ffmpeg had encoded it as BT.601: every output came out about 4% more saturated,
+                # by different amounts in different players.
+                "-vf", "scale=out_color_matrix=bt709:out_range=tv,format=yuv420p,"
+                       "setparams=colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv",
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+                *BT709,
                 str(out),
             ],
             stdin=subprocess.PIPE,
