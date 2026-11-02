@@ -9,6 +9,7 @@ onto the real canvas in the clip, so the last thing on screen is the painting it
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -125,13 +126,17 @@ def render_cameo(
     start: float = 0.0,
     occluder: Callable[[int], np.ndarray | None] | None = None,
     reveal: bool = False,
+    inset: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0),
 ) -> Path:
     """`corners` are the canvas corners in the clip, as fractions of its width and height.
 
     The clip is used from `start` for `seconds` (looped if shorter). `occluder(i)` gives the mask
     of whoever is in front of the canvas in the clip's i-th frame from `start` (any size, or None);
     those pixels stay the clip's. With `reveal`, the projection fades out over the `hold`, onto the
-    real canvas in the clip.
+    real canvas in the clip. `inset` is the share of the timelapse frame (left, top, right, bottom)
+    outside the canvas: a run's view keeps a strip of wall, which must not be stretched over the
+    canvas when `corners` are the canvas's own edges. With the run's own corners (a clip filmed
+    without moving the phone) the strip lands on the same wall, so it stays zero.
     """
     size = media.output_size(media.probe(clip), width)
     info = media.probe(timelapse)
@@ -139,7 +144,9 @@ def render_cameo(
     total = max(1, round(info.duration * info.fps))
 
     quad = order_corners(np.asarray(corners, dtype=np.float64) * size)
-    rect = np.array([[0, 0], [canvas_size[0], 0], [canvas_size[0], canvas_size[1]], [0, canvas_size[1]]], float)
+    left, top = inset[0] * canvas_size[0], inset[1] * canvas_size[1]
+    right, bottom = (1 - inset[2]) * canvas_size[0], (1 - inset[3]) * canvas_size[1]
+    rect = np.array([[left, top], [right, top], [right, bottom], [left, bottom]], float)
     project = Warper(homography(quad, rect), size, (canvas_size[1], canvas_size[0]))
     region = polygon_mask(quad, (size[1], size[0]))
     region_alpha = soften(region, 2)[..., None]
@@ -183,6 +190,16 @@ def render_cameo(
             projected = project.image(graded(canvas, curve)).astype(np.float32)
             writer.write(np.clip(frame * (1 - alpha) + projected * alpha, 0, 255))
     return out
+
+
+def run_corners(run: Path) -> np.ndarray:
+    """The canvas corners a finished run used (a run folder or its receipt.json), as fractions of
+    the frame: right for a cameo clip filmed after the session without moving the phone."""
+    path = run / "receipt.json" if run.is_dir() else run
+    corners = json.loads(path.read_text(encoding="utf-8"))["params"].get("corners")
+    if not corners:
+        raise ValueError(f"{path} has no canvas corners: that run used the whole frame")
+    return np.asarray(corners, dtype=np.float64)
 
 
 def mask_lookup(

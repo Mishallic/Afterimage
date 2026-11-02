@@ -2,9 +2,11 @@
 
     python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners 0.55,0.2 0.8,0.22 0.79,0.7 0.56,0.68
     python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners ... --start 2 --end 44 --track open --reveal
+    python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners-from out/session --track sam --reveal
 
-Film the clip with the canvas in view and sit beside it. Read the corners off with
-scripts/first_frame.py. With --track, SAM 3.1 (open: the weights on Modal; sam: the Meta API)
+Film the clip with the canvas in view and sit beside it. Best: right after the session, without
+moving the phone, and pass --corners-from the run, so the painting lands exactly on the canvas.
+Otherwise read the corners off with scripts/first_frame.py, and --inset the run's strip of wall. With --track, SAM 3.1 (open: the weights on Modal; sam: the Meta API)
 masks the person in the clip, so where you pass in front of the canvas you stay in front of the
 painting. --soften fades each stroke in over that many session seconds (a running average of real
 frames). Writes out/<timelapse folder>/cameo.mp4, with the clip's own sound.
@@ -23,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import numpy as np
 
 from afterimage import maskfile, media
-from afterimage.cameo import mask_lookup, render_cameo
+from afterimage.cameo import mask_lookup, render_cameo, run_corners
 from afterimage.config import ROOT, find_tool
 
 MASK_FPS = 15.0
@@ -90,8 +92,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("clip", type=Path, help="you sitting next to the canvas")
     parser.add_argument("timelapse", type=Path, help="timelapse.mp4 from afterimage_run.py")
-    parser.add_argument("--corners", nargs=4, metavar="X,Y", required=True,
-                        help="canvas corners in the clip, as fractions of the frame")
+    where = parser.add_mutually_exclusive_group(required=True)
+    where.add_argument("--corners", nargs=4, metavar="X,Y",
+                       help="canvas corners in the clip, as fractions of the frame")
+    where.add_argument("--corners-from", type=Path, metavar="RUN",
+                       help="use a run's own corners (its folder or receipt.json): for a clip filmed "
+                            "after the session without moving the phone, where they line up exactly")
+    parser.add_argument("--inset", metavar="L,T,R,B", default="0,0,0,0",
+                        help="share of the timelapse frame outside the canvas on each side, when --corners "
+                             "are the canvas's own edges in a clip filmed from elsewhere (default: none)")
     parser.add_argument("--start", type=float, default=0.0, help="second of the clip to start from")
     parser.add_argument("--end", type=float, help="second of the clip to stop at (default: --seconds after --start)")
     parser.add_argument("--seconds", type=float, default=8.0, help="length when --end isn't given")
@@ -104,7 +113,13 @@ def main() -> None:
     parser.add_argument("--out", type=Path, help="output file (default: cameo.mp4 next to the timelapse)")
     args = parser.parse_args()
 
-    corners = np.array([[float(v) for v in point.split(",")] for point in args.corners])
+    if args.corners_from is not None:
+        corners = run_corners(args.corners_from)
+    else:
+        corners = np.array([[float(v) for v in point.split(",")] for point in args.corners])
+    inset = tuple(float(v) for v in args.inset.split(","))
+    if len(inset) != 4:
+        parser.error("--inset takes four shares: left,top,right,bottom")
     seconds = (args.end - args.start) if args.end is not None else args.seconds
     occluder = None
     if args.track != "none":
@@ -114,7 +129,7 @@ def main() -> None:
     out = args.out or args.timelapse.parent / "cameo.mp4"
     silent = out.with_name(f"{out.stem}-silent.mp4")
     render_cameo(args.clip, corners, timelapse, silent, seconds=seconds, hold=args.hold, width=args.width,
-                 start=args.start, occluder=occluder, reveal=args.reveal)
+                 start=args.start, occluder=occluder, reveal=args.reveal, inset=inset)
     if media.probe(args.clip).has_audio:
         with_sound(silent, args.clip, args.start, seconds, out)
         silent.unlink()

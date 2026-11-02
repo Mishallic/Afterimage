@@ -50,6 +50,41 @@ class CameoTest(unittest.TestCase):
         self.assertLess(np.median(inside_error), 12)
         self.assertLess(np.median(outside_error), 6)
 
+    def test_the_runs_strip_of_wall_stays_off_the_canvas(self) -> None:
+        """A run's view keeps a strip of wall; with corners on the canvas's own edges, the inset
+        maps the painting alone onto the canvas instead of squeezing the strip in with it."""
+        session = synthetic_session(frames=40)
+        canvas_size = (session[0][2].shape[1], session[0][2].shape[0])
+        strip = (2 * (canvas_size[0] // 16), 2 * (canvas_size[1] // 32))  # even: the encoder needs it
+        framed = (canvas_size[0] + strip[0], canvas_size[1] + strip[1])
+        wall = np.full((framed[1], framed[0], 3), (70, 60, 50), np.uint8)
+        quad = CORNERS * ROOM
+        rect = np.array([[0, 0], [canvas_size[0], 0], [canvas_size[0], canvas_size[1]], [0, canvas_size[1]]], float)
+        region = polygon_mask(quad, (ROOM[1], ROOM[0]))
+        room = np.full((ROOM[1], ROOM[0], 3), (70, 60, 50), np.uint8)
+        blank = np.full((canvas_size[1], canvas_size[0], 3), 228, np.uint8)
+        room[region] = Warper(homography(quad, rect), ROOM, blank.shape[:2]).image(blank)[region]
+
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            with media.FrameWriter(work / "room.mp4", ROOM, 30) as clip:
+                for _ in range(30):
+                    clip.write(room)
+            with media.FrameWriter(work / "timelapse.mp4", framed, 30) as timelapse:
+                for _, _, truth in session:
+                    frame = wall.copy()
+                    frame[strip[1]:, strip[0]:] = truth
+                    timelapse.write(frame)
+            out = render_cameo(work / "room.mp4", CORNERS, work / "timelapse.mp4", work / "cameo.mp4",
+                               seconds=2.0, hold=0.5, width=ROOM[0],
+                               inset=(strip[0] / framed[0], strip[1] / framed[1], 0.0, 0.0))
+            last = list(media.read_frames(out, fps=30, size=ROOM))[-1].astype(np.int16)
+
+        expected = Warper(homography(quad, rect), ROOM, session[-1][2].shape[:2]).image(session[-1][2])
+        inner = region & ~dilate(~region, 4)
+        inside_error = np.abs(last - expected.astype(np.int16)).max(axis=2)[inner]
+        self.assertLess(np.median(inside_error), 12)
+
 
 class CameoOcclusionTest(unittest.TestCase):
     """Someone in front of the canvas stays in front of the painting; the colours come from the
