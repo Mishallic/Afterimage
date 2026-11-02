@@ -1,18 +1,22 @@
 # Afterimage
 
-**Think it. It happens.** Film yourself painting: Afterimage takes the painter out of the
-footage, and the painting stays.
+**Everything is being faked. Afterimage keeps it real.** Film yourself painting, and the
+footage becomes the painting's own record: watch it form with nobody in the way, sit back down
+beside it, or tap any stroke to see the hand that made it.
 
 ![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: Afterimage at the same second.](docs/camera-vs-afterimage.jpg)
 
 *The camera 27 minutes into the third session (left), and Afterimage at the same second (right).*
 
-Every pixel in the output is derived only from camera frames: aligned, colour-matched and
-averaged over a few frames. No generative model touches the image. Nothing is invented.
+Artists have always pulled new technology into the work: new tools and surfaces, projection,
+video, computers. Afterimage brings in Meta's newest vision and language models with one rule:
+they decide where the painter is, never what the painting looks like. Every pixel in the output
+comes from camera frames, aligned, colour-matched and averaged over a few frames. No generative
+model touches the image, nothing is invented, and a script checks it.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
-*Build for Your World*: I paint, and every process video I film is mostly my own elbow.
-Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
+*Build for Your World*: I stopped painting ten years ago, picked it back up for this, and wanted
+AI in the work without letting it fake any of it. Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
 weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. The first two sessions
 here were processed both ways and the third through the API; each run's receipt names the path
 that made it.
@@ -255,15 +259,23 @@ What the two sessions here taught:
 What the method needs is a still camera, a surface that holds still between touches, and
 someone in the way. Easels are one case of that:
 
+- **Teaching.** An art teacher films a demonstration once; students watch the painting build up
+  with nobody blocking it, then tap any passage to see the hand and brush that made it, at
+  natural speed. The record answers "how did you do that bit?" stroke by stroke.
+- **Proof of process.** Artists get accused of using AI, and a process video is the usual
+  answer. This one is watchable, and every stroke in it links back to the footage of the hand
+  making it.
 - **Other work made by hand.** Calligraphy, illustration, hand-built pottery, carving,
   miniatures: the same timelapse, receipt and Underneath, with Spark picking the tools to track
   (a sponge, a chisel, a loupe) the way it picked the palette knife here.
 - **Film clean plates.** A street with nobody in it, from footage of a busy one, where every
   pixel is one the camera saw. A generative eraser would invent what was behind each passer-by;
   here a car that parks for the whole shot stays, the way paint does.
-- **Next: surfaces that move.** A pot on a turning wheel, or a face under make-up, moves between
-  touches. The tracker that follows a knocked easel is a first step, but a turning or bending
-  surface needs more than a shift, turn and scale.
+- **Next: sculpture, and surfaces that move.** A sculpture modelled on a fixed stand, filmed
+  from one side, is the same problem: clay that stays is form, a hand that leaves is not. One
+  turned on a turntable, a pot on a wheel, or a face under make-up moves between touches; the
+  tracker that follows a knocked easel is a first step, but a turning or bending surface needs
+  more than a shift, turn and scale.
 
 None of these has been run yet; they are where the same record goes next.
 
