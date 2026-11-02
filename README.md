@@ -1,6 +1,7 @@
 # Afterimage
 
-**Film yourself painting. Afterimage takes the painter out of the footage, and the painting stays.**
+**Think it. It happens.** Film yourself painting: Afterimage takes the painter out of the
+footage, and the painting stays.
 
 ![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: Afterimage at the same second.](docs/camera-vs-afterimage.jpg)
 
@@ -207,8 +208,9 @@ python scripts/afterimage_eval.py data/session.mp4 --static 300-360
 python scripts/cameo_run.py data/sitting.mp4 out/session/timelapse.mp4 --corners-from out/session --track sam --reveal
 ```
 
-`--no-scan` skips the Spark scan; `--corners` given by hand always win and are never snapped;
-`--start 3` skips the seconds while the phone was being set down; `--out <folder>` puts the
+`--no-scan` skips the Spark scan; `--corners` given by hand always win and are never snapped
+(they are still followed if the canvas moves); `--fixed-canvas` holds the corners where they
+start; `--start 3` skips the seconds while the phone was being set down; `--out <folder>` puts the
 outputs and caches somewhere other than `out/<session>`. The results page is
 `out/<session>/index.html`; it runs from disk. Next to it: `receipt.json`, `stats.json`,
 `frames.json` (per frame: share covered, mask stillness, disagreement with the plate, exposure
