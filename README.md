@@ -250,6 +250,23 @@ What the two sessions here taught:
   without moving the phone, and pass `--corners-from` the run: the painting lands exactly on the
   canvas.
 
+## Beyond painting
+
+What the method needs is a still camera, a surface that holds still between touches, and
+someone in the way. Easels are one case of that:
+
+- **Other work made by hand.** Calligraphy, illustration, hand-built pottery, carving,
+  miniatures: the same timelapse, receipt and Underneath, with Spark picking the tools to track
+  (a sponge, a chisel, a loupe) the way it picked the palette knife here.
+- **Film clean plates.** A street with nobody in it, from footage of a busy one, where every
+  pixel is one the camera saw. A generative eraser would invent what was behind each passer-by;
+  here a car that parks for the whole shot stays, the way paint does.
+- **Next: surfaces that move.** A pot on a turning wheel, or a face under make-up, moves between
+  touches. The tracker that follows a knocked easel is a first step, but a turning or bending
+  surface needs more than a shift, turn and scale.
+
+None of these has been run yet; they are where the same record goes next.
+
 ## Limitations
 
 - A fixed camera is required; handheld footage isn't supported. The canvas may move on the easel
