@@ -60,6 +60,23 @@ class SnapCornersTest(unittest.TestCase):
         self.assertIsNotNone(snapped)
         self.assertLess(np.abs(snapped - TRUE).max(), 1.5, str(snapped))
 
+    def test_a_white_wardrobe_and_a_dark_monitor_beside_the_canvas(self) -> None:
+        # The third session: by daylight a wardrobe as white as the canvas stood to its right,
+        # touching it in places, and a black monitor a little left of it, past a pale wall.
+        rng = np.random.default_rng(7)
+        for trial in range(5):
+            frame = scene(TRUE, seed=trial).astype(np.float32)
+            pale = ~polygon_mask(TRUE, (VIEW[1], VIEW[0]))
+            frame[pale] = (170, 166, 160)  # the canvas steps down 79 to it, the monitor 136 below it
+            frame[150:330, 10:62] = (20, 20, 22)  # the monitor, 25-30 px off the left edge
+            frame[:, 580:] = CANVAS  # the wardrobe
+            frame[200:206, 550:580] = CANVAS  # where it meets the canvas
+            frame = np.clip(frame + rng.normal(0, 3.0, frame.shape), 0, 255).astype(np.uint8)
+            rough = TRUE + rng.uniform(-28, 28, size=(4, 2))
+            snapped = snap_corners(frame, rough)
+            self.assertIsNotNone(snapped, f"trial {trial}")
+            self.assertLess(np.abs(snapped - TRUE).max(), 1.5, f"trial {trial}: {snapped}")
+
     def test_a_quad_on_the_wall_is_refused(self) -> None:
         on_the_wall = np.array([[575, 60], [635, 70], [638, 430], [572, 420]], dtype=np.float64)
         self.assertIsNone(snap_corners(scene(TRUE), on_the_wall))

@@ -3,7 +3,7 @@
 Spark places the corners within a few percent of the frame. A few percent of the frame is the
 easel clamp and a strip of wall across the top of every output, and the bottom of the painting
 cut off. The canvas is the one bright, straight-edged thing in the shot, so each edge is found
-as the strongest bright-inside, dark-outside step near the rough edge, and a robust line
+as the innermost strong bright-inside, dark-outside step near the rough edge, and a robust line
 through those steps ignores whatever crosses the edge: the clamp, a brush, the painter's hand.
 """
 
@@ -30,6 +30,13 @@ WINDOW = 6
 """Pixels averaged on either side of a candidate step."""
 MIN_STEP = 12.0
 """Smallest inside-minus-outside brightness step (0-255) that counts as an edge."""
+INNER_SHARE = 0.3
+"""Of the step peaks near an edge, the innermost at least this share of the strongest is the canvas's.
+
+On the third session a black monitor stood a few centimetres left of the canvas, past a pale
+wall: the wall-to-monitor step (85-98) outdid the canvas-to-wall one (47-62), and the strongest
+step put the left edge on the monitor. Below 0.2, faint steps inside the canvas won instead.
+"""
 MIN_KEPT = 0.4
 """Share of an edge's samples the fitted line must agree with."""
 MAX_SHIFT = 1.5
@@ -46,15 +53,21 @@ def snap_corners(frame: np.ndarray, corners: np.ndarray) -> np.ndarray | None:
 
     Returns them ordered top-left, top-right, bottom-right, bottom-left, or None when no canvas
     fits: an edge without a clear step, a corner that would move too far, or a quadrilateral
-    that isn't convex.
+    that isn't convex. The search starts from the coarse fix, and again from the rough corners
+    when that fails: beside a wardrobe as white as the canvas, the bright region the coarse fix
+    grows takes in the wardrobe too.
     """
     brightness = _whiteness(frame)
     height, width = brightness.shape
     reach = int(round(BAND * min(width, height)))
     points = order_corners(corners)
     coarse = _coarse_quad(brightness, points)
-    if coarse is not None:
-        points = coarse
+    snapped = None if coarse is None else _snap_from(brightness, coarse, reach)
+    return snapped if snapped is not None else _snap_from(brightness, points, reach)
+
+
+def _snap_from(brightness: np.ndarray, points: np.ndarray, reach: int) -> np.ndarray | None:
+    """The canvas edges searched for near the quadrilateral `points`, met at the corners."""
     lines = []
     for index in range(4):
         line = _edge_line(brightness, points[index], points[(index + 1) % 4], reach)
@@ -119,7 +132,7 @@ def _coarse_quad(brightness: np.ndarray, rough: np.ndarray) -> np.ndarray | None
 def _edge_line(
     brightness: np.ndarray, start: np.ndarray, end: np.ndarray, reach: int
 ) -> tuple[np.ndarray, np.ndarray] | None:
-    """The line of the strongest step from bright (inside) to darker (outside) near the edge start->end."""
+    """The line of the innermost strong step from bright (inside) to darker (outside) near the edge start->end."""
     height, width = brightness.shape
     direction = end - start
     length = float(np.hypot(*direction))
@@ -139,7 +152,12 @@ def _edge_line(
     inside = (sums[:, k + WINDOW] - sums[:, k]) / WINDOW
     outside = (sums[:, k] - sums[:, k - WINDOW]) / WINDOW
     step = inside - outside
-    best = step.argmax(axis=1)
+    # The canvas is the innermost edge: of the step peaks strong enough to be one, take the last.
+    padded = np.pad(step, ((0, 0), (1, 1)), constant_values=-np.inf)
+    peak = (step >= padded[:, :-2]) & (step >= padded[:, 2:])
+    strong = peak & (step >= np.maximum(MIN_STEP, INNER_SHARE * step.max(axis=1, keepdims=True)))
+    innermost = step.shape[1] - 1 - strong[:, ::-1].argmax(axis=1)
+    best = np.where(strong.any(axis=1), innermost, step.argmax(axis=1))
     strength = step[np.arange(SAMPLES), best]
     good = strength >= MIN_STEP
     if good.sum() < MIN_KEPT * SAMPLES:
