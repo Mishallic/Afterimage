@@ -1,22 +1,24 @@
-# Afterimage
+# pAInt
 
-**Everything is being faked. Afterimage keeps it real.** Film yourself painting, and the
-footage becomes the painting's own record: watch it form with nobody in the way, sit back down
-beside it, or tap any stroke to see the hand that made it.
+**pAInt keeps it sincere.** Film yourself painting, and the footage becomes the painting's own
+record: watch it form with nobody in the way, sit back down beside it, or tap any stroke to see
+the hand that made it.
 
-![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: Afterimage at the same second.](docs/camera-vs-afterimage.jpg)
+![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: pAInt at the same second.](docs/camera-vs-afterimage.jpg)
 
-*The camera 27 minutes into the third session (left), and Afterimage at the same second (right).*
+*The camera 27 minutes into the third session (left), and pAInt at the same second (right).*
 
 Artists have always pulled new technology into the work: new tools and surfaces, projection,
-video, computers. Afterimage brings in Meta's newest vision and language models with one rule:
-they decide where the painter is, never what the painting looks like. Every pixel in the output
-comes from camera frames, aligned, colour-matched and averaged over a few frames. No generative
-model touches the image, nothing is invented, and a script checks it.
+video, computers. pAInt brings in Meta's newest vision and language models with one rule: they
+decide where the painter is, never what the painting looks like. The AI is in the name, never
+in the paint. Every pixel in the output comes from camera frames, aligned, colour-matched and
+averaged over a few frames. No generative model touches the image, nothing is invented, and a
+script checks it.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
 *Build for Your World*: I stopped painting ten years ago, picked it back up for this, and wanted
-AI in the work without letting it fake any of it. Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
+AI in the work without letting it fake any of it. Built with **SAM 3.1** and **Muse Spark**,
+either through the Meta Model API or from the open
 weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. The first two sessions
 here were processed both ways and the third through the API; each run's receipt names the path
 that made it.
@@ -136,19 +138,19 @@ from the rest of the session, and scored against what the camera saw.
 
 | Session | Method | ΔE00, lower is better | Pixels clearly off (ΔE00 > 5) | PSNR (dB) |
 |---|---|---|---|---|
-| 1, 84 min | Afterimage | **2.92** | **16.0%** | **27.3** |
+| 1, 84 min | pAInt | **2.92** | **16.0%** | **27.3** |
 | | Masked median (Loomis-style, same SAM masks) | 4.01 | 18.4% | 25.7 |
 | | Temporal median (no masks) | 5.59 | 27.2% | 21.4 |
-| 2, 52 min | Afterimage | **2.24** | **6.1%** | **29.2** |
+| 2, 52 min | pAInt | **2.24** | **6.1%** | **29.2** |
 | | Masked median (Loomis-style, same SAM masks) | 2.54 | 8.4% | 29.2 |
 | | Temporal median (no masks) | 3.92 | 15.4% | 25.1 |
 
-Read honestly: Afterimage has the lowest average error on both sessions, but stretch by
+Read honestly: pAInt has the lowest average error on both sessions, but stretch by
 stretch it beats the masked median about half the time (7 of 14, and 30 of 63). Its lead
 comes from never breaking. When the painter steps back after a long spell at the canvas, the
 median has nothing uncovered to work from: its worst stretches score 21.4 and 8.7, where
-Afterimage scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a copy of the
-camera and edges ahead. Afterimage's own worst stretches come early in each session, where bare
+pAInt scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a copy of the
+camera and edges ahead. pAInt's own worst stretches come early in each session, where bare
 canvas and a pale first wash sit under its change threshold: 5.5 against the median's 1.2 at
 3:32 into session 2.
 
@@ -166,7 +168,7 @@ are not a stand-in for footage.
 
 Three scenes, three methods ([`eval/synthetic.md`](eval/synthetic.md), `scripts/afterimage_bench.py`):
 
-| Scene | Afterimage | Masked median (Loomis-style) | Temporal median (no masks) |
+| Scene | pAInt | Masked median (Loomis-style) | Temporal median (no masks) |
 |---|---|---|---|
 | Moving hand + shadow: frames with a visible leftover | **0.0%** | 47.8% | 92.2% |
 | Resting hand + still shadow: frames with a visible leftover | **0.0%** | 55.6% | 93.3% |
@@ -176,7 +178,7 @@ The step-back protocol ([`afterimage/heldout.py`](afterimage/heldout.py), `scrip
 hides the frames where nobody is over the canvas from every method, rebuilds, and scores
 against what the camera saw there. A test shows hidden means unseen: a stroke first uncovered
 inside a hidden window is missed (5.5% of pixels off) and caught when the method is allowed
-to peek (0.3%). On the synthetic session: Afterimage ΔE00 0.27, 0.35% of pixels clearly off,
+to peek (0.3%). On the synthetic session: pAInt ΔE00 0.27, 0.35% of pixels clearly off,
 PSNR 39.6; masked median 0.74 / 1.14% / 28.4; temporal median 1.15 / 2.08% / 25.4.
 
 ### The critic, measured
@@ -202,6 +204,8 @@ plants instead of 6. On both sessions' final runs the critic found nothing to fi
 tests with SAM and Spark played by mocks.
 
 ## Run it
+
+The code and scripts keep the project's first name, `afterimage`.
 
 ```
 python -m venv .venv && .venv\Scripts\pip install -r requirements.txt   # ffmpeg on PATH

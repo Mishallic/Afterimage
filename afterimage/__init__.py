@@ -1,1 +1,2 @@
-"""Afterimage: erase the painter from a painting session so the painting paints itself."""
+"""pAInt (the code keeps its first name, afterimage): a painting session turned into the painting's own
+record, with every pixel from the camera."""

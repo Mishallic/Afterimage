@@ -16,7 +16,7 @@ TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>__TITLE__ · Afterimage</title>
+<title>__TITLE__ · pAInt</title>
 <style>
   :root { --bg: #0b0d12; --panel: #151922; --line: #262c38; --text: #eef1f6; --muted: #8a93a6; --gold: #f2c14e; }
   * { box-sizing: border-box; }
@@ -48,7 +48,7 @@ TEMPLATE = """<!doctype html>
 </head>
 <body>
 <main>
-  <header><h1>__TITLE__</h1><p>Made by hand. The painting stays. Every pixel comes from the camera's frames: aligned, colour-matched and averaged over a few frames, never invented.</p></header>
+  <header><h1>__TITLE__</h1><p>Made by hand, kept sincere. Every pixel comes from the camera's frames: aligned, colour-matched and averaged over a few frames, never invented.</p></header>
   <section class="grid" id="tiles"></section>
 
   <section class="panel">
@@ -80,7 +80,7 @@ TEMPLATE = """<!doctype html>
 
   <section class="panel two">
     <div><h2>Reel</h2><video src="reel.mp4" controls playsinline></video></div>
-    <div><h2>Camera vs Afterimage</h2><video src="compare.mp4" controls playsinline></video></div>
+    <div><h2>Camera vs pAInt</h2><video src="compare.mp4" controls playsinline></video></div>
   </section>
 
   <section class="panel">
@@ -176,7 +176,7 @@ document.getElementById("download").onclick = () => {
       g.fillStyle = "#8a93a6"; g.font = "700 24px system-ui, sans-serif"; g.fillText(k.toUpperCase(), x, y);
       g.fillStyle = "#eef1f6"; g.font = "800 40px system-ui, sans-serif"; g.fillText(String(v), x, y + 46);
     });
-    g.fillStyle = "#f2c14e"; g.font = "700 26px system-ui, sans-serif"; g.fillText("No AI-generated pixels · Afterimage", 70, 1310);
+    g.fillStyle = "#f2c14e"; g.font = "700 26px system-ui, sans-serif"; g.fillText("No AI-generated pixels · pAInt", 70, 1310);
     const a = document.createElement("a"); a.download = "afterimage-card.png"; a.href = c.toDataURL("image/png"); a.click();
   };
   img.src = images.final;
