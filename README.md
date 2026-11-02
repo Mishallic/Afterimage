@@ -2,19 +2,26 @@
 
 **Film yourself painting. Afterimage takes the painter out of the footage, and the painting stays.**
 
+![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: Afterimage at the same second.](docs/camera-vs-afterimage.jpg)
+
+*The camera 27 minutes into the third session (left), and Afterimage at the same second (right).*
+
 Every pixel in the output is derived only from camera frames: aligned, colour-matched and
 averaged over a few frames. No generative model touches the image. Nothing is invented.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
 *Build for Your World*: I paint, and every process video I film is mostly my own elbow.
 Built with **SAM 3.1** and **Muse Spark**, either through the Meta Model API or from the open
-weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. Both sessions here were
-processed both ways, and each run's receipt names the path that made it.
+weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. The first two sessions
+here were processed both ways and the third through the API; each run's receipt names the path
+that made it.
 
 ## What it does
 
 - **A hands-free timelapse.** The painter, their hands and tools are removed and each stroke
   appears the moment the camera first saw it, dated to that moment.
+
+  ![The third session forming, from its timelapse: 8, 15, 23, 31, 46 and 61 minutes in.](docs/forming.jpg)
 - **Cameo.** You sit beside the canvas with a cup of tea while it fills in. The timelapse is
   projected into a real clip of the room (a labelled composite).
 - **Pixel receipt.** Tap any spot on the finished painting and the camera footage of the last
@@ -100,7 +107,13 @@ The hard cases, and what handles them:
   down. When it has moved by more than half a pixel and holds there for five frames, the
   corners follow; ffmpeg straightens each frame with the corners in force, and the receipt
   records every move, so verify re-derives the same frames. A canvas with too little paint to
-  place holds its corners, and then nothing on it can be misplaced either.
+  place holds its corners, and then nothing on it can be misplaced either. On the third session
+  the corners followed 32 times; the timelapse holds still across the second knock, where at
+  fixed corners it slid 14 px (at 1280 wide) and stayed there, and the changes recorded as new
+  paint fall from 14.3 million to 8.2 million. Nothing else differs between the two runs, so
+  the other 6 million came from the slide: stroke edges read as repainted wherever they moved.
+
+  ![The third session's last frame, held at the first corners (left) and followed (right).](docs/knocked-easel.jpg)
 - **The first frame.** Each pixel starts from its first uncovered value that holds steady, so
   a painter in frame 0 doesn't linger, and a stroke made in the first seconds still arrives
   as new paint.
