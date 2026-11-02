@@ -92,6 +92,9 @@ class Params:
     """Where exposure drift is measured: "wall" (the room around the canvas, where paint never
     lands; needs corners and masks), "canvas" (the bare canvas, then settled paint) or "off".
     Receipts from before the option was added re-derive with "canvas"; new runs default to "wall"."""
+    follow_bare: bool = False
+    """Bare canvas follows slow changes of light in the record, as paint does (CleanPlateConfig).
+    Receipts from before the option was added re-derive without it; new runs default to it."""
     critic_rounds: int = 2
     """With SAM masks: how many times Spark may inspect the result and have SAM fix what it finds."""
     output_fps: float = 30.0
@@ -629,7 +632,7 @@ def clean(
 
     plate = CleanPlate(start, CleanPlateConfig(
         dilate_px=params.dilate, persist_frames=params.persist_frames, record=True,
-        normalize_exposure=params.exposure != "off",
+        normalize_exposure=params.exposure != "off", follow_bare=params.follow_bare,
     ))
     occlusion: list[float] = []
     stillness: list[float] = []
@@ -678,10 +681,13 @@ key always uses this one value; caches made before the window changed stay valid
 
 def _clean_key(video: Path, params: Params, geometry: Geometry, streams: list[dict], painted: list[str]) -> str:
     stat = video.stat()
+    keyed = replace(params, revert_window=CACHE_REVERT_WINDOW).to_dict()
+    if not params.follow_bare:
+        del keyed["follow_bare"]  # caches made before the option existed keep their keys
     payload = {
         "version": CLEAN_CACHE_VERSION,
         "video": [video.name, stat.st_size, int(stat.st_mtime)],
-        "params": replace(params, revert_window=CACHE_REVERT_WINDOW).to_dict(),
+        "params": keyed,
         "size": list(geometry.size),
         "streams": [stream.get("sha256") for stream in streams],
         # Which tracked objects count as painted decides the masks as much as the streams do.

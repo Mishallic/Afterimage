@@ -94,6 +94,14 @@ class CleanPlateConfig:
     Commits are dated to the update their value was first seen, not the one that confirmed it,
     so replaying the Timeline shows paint as soon as it appeared, without the persistence delay.
     """
+    follow_bare: bool = False
+    """Record slow drift on canvas that was never painted too, not only on paint (see DRIFT_THRESHOLD).
+
+    Without it, bare canvas replays in the light of the session's first frames for as long as it
+    stays bare. On the third session the window light on the canvas fell by 20 levels over the
+    first twenty minutes while the record kept it bright; then an arm's shadow held long enough to
+    commit a patch, the patch followed the camera from there, and for six minutes it sat in the
+    replay as a darker block: the one piece of bare canvas shown in the light it really had."""
 
 
 def visible_mask(occluder: np.ndarray | None, shape: tuple[int, int], dilate_px: int) -> np.ndarray:
@@ -369,7 +377,7 @@ class CleanPlate:
         stroke. That change is marked as drift: it isn't a stroke, so it doesn't re-date the pixel.
         """
         drift = np.zeros(settled.shape, dtype=np.float32)
-        tracked = settled & (self._entry_chunk >= 0)
+        tracked = settled if self.config.follow_bare else settled & (self._entry_chunk >= 0)
         drift[tracked] = np.abs(self._clean[tracked] - self._recorded[tracked]).max(axis=1)
         young = (self._updates - self._committed_at) <= REFINE_WINDOW
         amend = tracked & young & (drift > REFINE_THRESHOLD)

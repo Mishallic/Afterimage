@@ -203,6 +203,43 @@ class SlowDriftTest(unittest.TestCase):
         self.assertGreater(int(plate._committed_at[8, 10]), drift_from, "but it does restart the refine window")
 
 
+class BareCanvasLightTest(unittest.TestCase):
+    """The light on a bare canvas falls slowly; a shadow passes over part of it and is vetoed. The
+    replay should show the whole canvas in the light it has, not a block where the shadow was."""
+
+    @staticmethod
+    def replayed(follow_bare: bool) -> tuple[np.ndarray, object]:
+        from afterimage.cleanplate import CleanPlate, CleanPlateConfig
+
+        size = (24, 20)
+        white = np.full((size[1], size[0], 3), 235.0, dtype=np.float32)
+        plate = CleanPlate(white.astype(np.uint8), CleanPlateConfig(
+            persist_frames=3, record=True, normalize_exposure=False, dilate_px=0, follow_bare=follow_bare))
+        updates = 260
+        for update in range(updates):
+            light = 235.0 - 30.0 * min(max(update - 10, 0) / 200, 1.0)  # 0.15 levels an update
+            frame = np.full_like(white, light)
+            if 90 <= update < 102:
+                frame[4:12, 4:12] = light - 35.0  # an arm's shadow, held long enough to commit
+            plate.update(np.clip(frame + 0.5, 0, 255).astype(np.uint8), None)
+        timeline = plate.timeline()
+        kept = timeline.without(timeline.transients(threshold=plate.config.change_threshold, window=60))
+        for canvas, _ in kept.replay(white.astype(np.uint8), updates):
+            pass
+        return canvas.astype(int), kept
+
+    def test_bare_canvas_follows_the_light_and_the_shadow_leaves_no_block(self) -> None:
+        canvas, kept = self.replayed(follow_bare=True)
+        self.assertLessEqual(int(np.abs(canvas - 205).max()), 6, f"the canvas in the light it has: {canvas.min()}-{canvas.max()}")
+        self.assertLessEqual(int(np.abs(canvas[8, 8] - canvas[16, 18]).max()), 3, "no block where the shadow was")
+        self.assertEqual(int(kept.painted_at().max()), -1, "light is not paint: no stroke on record")
+
+    def test_without_it_the_shadow_leaves_a_block(self) -> None:
+        # How runs before Nov 2 replay it, which their receipts re-derive.
+        canvas, _ = self.replayed(follow_bare=False)
+        self.assertGreater(int(np.abs(canvas[8, 8] - canvas[16, 18]).max()), 15)
+
+
 class SurroundExposureTest(unittest.TestCase):
     """Light is measured on the room around the canvas: paint over the whole canvas stays paint,
     and a change of light after the canvas is covered is still a change of light."""

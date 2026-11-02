@@ -49,6 +49,8 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None, bool]:
     parser.add_argument("--output-fps", type=float, default=defaults.output_fps)
     parser.add_argument("--exposure", choices=["wall", "canvas", "off"], default="wall",
                         help="where exposure drift is measured: the room around the canvas (default), the canvas, or not at all")
+    parser.add_argument("--hold-bare", action="store_true",
+                        help="keep unpainted canvas in the light of the first frames, as runs before Nov 2 did")
     parser.add_argument("--title", default="", help="name of the painting, for the match page")
     parser.add_argument("--no-reels", action="store_true", help="skip rendering the social reels")
     parser.add_argument("--out", type=Path, help="output folder (default out/<video name>); caches live there too")
@@ -69,6 +71,7 @@ def parse_args() -> tuple[Path, Params, str, bool, Path | None, bool]:
         scan=not args.no_scan,
         output_fps=args.output_fps,
         exposure=args.exposure,
+        follow_bare=not args.hold_bare,
     )
     return args.video, params, args.title, not args.no_reels, args.out, not args.fixed_canvas
 
