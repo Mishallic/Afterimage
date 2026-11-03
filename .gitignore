@@ -15,3 +15,12 @@ __pycache__/
 
 # node
 node_modules/
+
+# The sample keeps only what a run can't rebuild: its receipt, the ledger of model calls and the
+# model answers. Replaying it (README, Try it) writes the outputs and caches here.
+samples/session3-excerpt/**
+!samples/session3-excerpt/**/
+!samples/session3-excerpt/receipt.json
+!samples/session3-excerpt/ledger.jsonl
+!samples/session3-excerpt/spark/*.json
+!samples/session3-excerpt/sam/*/*.events.ndjson

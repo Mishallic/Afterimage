@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "tool": "afterimage",
+  "models": {
+    "masks": "sam-3.1 (Meta Model API)",
+    "spark": "muse-spark-1.3"
+  },
+  "source": {
+    "file": "session3-excerpt.mp4",
+    "sha256": "45e37fce0ffa211795cd0fc0b824a746144aa8ea2d228fe914a797fc1d05648d",
+    "bytes": 36660526,
+    "duration_s": 90.03352
+  },
+  "params": {
+    "fps": 1.0,
+    "width": 1280,
+    "sam_width": 640,
+    "seconds": null,
+    "start": 0.0,
+    "corners": [
+      [
+        0.11,
+        0.1592
+      ],
+      [
+        0.3237,
+        0.1727
+      ],
+      [
+        0.3118,
+        0.6122
+      ],
+      [
+        0.0998,
+        0.6089
+      ]
+    ],
+    "moves": [],
+    "aspect": null,
+    "dilate": 12,
+    "persist_seconds": 8.0,
+    "revert_window": 60.0,
+    "concepts": [
+      "person",
+      "hand",
+      "paintbrush"
+    ],
+    "masks": "sam",
+    "scan": true,
+    "exposure": "wall",
+    "follow_bare": true,
+    "critic_rounds": 2,
+    "output_fps": 30.0
+  },
+  "spark_scan": {
+    "file": "spark/scan.json",
+    "sha256": "99985106a68e5c11f222265c75e5777faa922225fa466bcb2801e664830c9a31",
+    "seen": [
+      {
+        "phrase": "person's hand",
+        "kind": "hand"
+      },
+      {
+        "phrase": "sweater sleeve",
+        "kind": "body"
+      },
+      {
+        "phrase": "paintbrush",
+        "kind": "brush"
+      }
+    ],
+    "added_concepts": [],
+    "canvas_corners": [
+      [
+        0.042,
+        0.066
+      ],
+      [
+        0.383,
+        0.07
+      ],
+      [
+        0.381,
+        0.718
+      ],
+      [
+        0.032,
+        0.713
+      ]
+    ],
+    "snapped_corners": [
+      [
+        0.11,
+        0.1592
+      ],
+      [
+        0.3237,
+        0.1727
+      ],
+      [
+        0.3118,
+        0.6122
+      ],
+      [
+        0.0998,
+        0.6089
+      ]
+    ]
+  },
+  "sam_streams": [
+    {
+      "concept": "person",
+      "file": "sam/1fps-640px/person.events.ndjson",
+      "sha256": "530ea9b9dd2a930f7a5fc7c46c731d59c0ad9ae35b0ba8400da2979df41aaeb2"
+    },
+    {
+      "concept": "hand",
+      "file": "sam/1fps-640px/hand.events.ndjson",
+      "sha256": "dc0f911ab32f7b5c11ade3fe6e56dfac3a831373d2c11d23941a07aee8b1b5b1"
+    },
+    {
+      "concept": "paintbrush",
+      "file": "sam/1fps-640px/paintbrush.events.ndjson",
+      "sha256": "ff8047ba74bba3d02b0c0c3c580a4ae67e13687951cfcbe2c93ff9ee14881971"
+    }
+  ],
+  "critic": {
+    "rounds": [
+      {
+        "round": 1,
+        "keyframes": [
+          52,
+          89
+        ],
+        "file": "spark/critic-1-187fa255.json",
+        "sha256": "a24669607f99c0bc1e486aafffd52713235c42ca94f6b702dc718ebecb30517b",
+        "defects": [],
+        "checks": [],
+        "unconfirmed": 0,
+        "tracked": 0,
+        "held": 0
+      }
+    ],
+    "min_confidence": 0.5
+  },
+  "meta_calls": {
+    "file": "ledger.jsonl",
+    "sha256": "46a4b06c425e547045cd197fe077714fd789399443d03bbf6ebc4816e7af24c7",
+    "calls": 7,
+    "by_model": {
+      "files.create": {
+        "calls": 2,
+        "errors": 0,
+        "est_cost_usd": 0.0
+      },
+      "muse-spark-1.3": {
+        "calls": 2,
+        "errors": 0,
+        "est_cost_usd": 0.0
+      },
+      "sam-3.1": {
+        "calls": 3,
+        "errors": 0,
+        "est_cost_usd": 0.054
+      }
+    }
+  },
+  "kept_as_painted": [],
+  "timeline": {
+    "changes": 2037425,
+    "vetoed": 16064,
+    "kept": 2021361,
+    "kept_drift": 2017495
+  },
+  "output": {
+    "frames": 90,
+    "size": [
+      1280,
+      1850
+    ],
+    "canvas_sha256": "58540f55b42b684a0e2f1b2f36a2d6b671ed259a47a05cf167da7f69338b6739",
+    "final_sha256": "2c2f0b792fb7e2b5d26bd9aedb53a73f380f3fa5071b794223c4f490d31fb1ce"
+  },
+  "generative_steps": [],
+  "toolchain": {
+    "python": "3.11.3",
+    "numpy": "2.4.6",
+    "ffmpeg": "ffmpeg version 9.0.2-full_build-www.gyan.dev Copyright (c) 2000-2026 the FFmpeg developers"
+  }
+}

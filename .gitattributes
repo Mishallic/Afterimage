@@ -2,3 +2,7 @@
 *.mp4 binary
 *.jpg binary
 *.png binary
+# A sample's cached model answers and ledger are hashed in its receipt: keep their bytes exactly.
+samples/**/ledger.jsonl binary
+samples/**/spark/*.json binary
+samples/**/sam/*/*.events.ndjson binary

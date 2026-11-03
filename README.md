@@ -23,6 +23,39 @@ weights: SAM 3.1 on a Modal GPU and Muse Spark Open through Baseten. The first t
 here were processed both ways and the third through the API; each run's receipt names the path
 that made it.
 
+## Try it
+
+**Check a real run, no key needed.** [`samples/`](samples) holds 90 seconds of the third session
+(cropped to the easel, sound removed) with the receipt of its run and the answers SAM 3.1 and Muse
+Spark gave it. With Python 3.11, ffmpeg on the PATH and `pip install -r requirements.txt`:
+
+```
+python scripts/afterimage_verify.py samples/session3-excerpt/receipt.json --video samples/session3-excerpt.mp4
+python scripts/afterimage_run.py samples/session3-excerpt.mp4 --out samples/session3-excerpt
+```
+
+- **Verify** checks the footage and every cached model answer against the hashes in the receipt,
+  then re-derives each output frame from the footage and compares it with the receipt's hash chain.
+- **Replay** runs the whole pipeline from the cached answers and writes the results page,
+  `samples/session3-excerpt/index.html` (tap any stroke), and the videos. It rewrites the receipt,
+  and `git diff samples/` shows nothing.
+- Neither calls a model, so neither tests the models. A **fresh run** asks SAM and Spark again; their
+  answers, and so the output, come out close but not identical. Bit for bit also assumes the
+  toolchain the receipt names (Python 3.11, numpy 2.4, ffmpeg 9.0): another ffmpeg build can resample
+  a pixel differently.
+
+**On your own footage.** A phone on a tripod, the canvas in view the whole session, and a Meta
+Model API key in `.env` (copy `.env.example`). Then:
+
+```
+python scripts/afterimage_run.py my-session.mp4 --start 3
+```
+
+The results page is `out/my-session/index.html`. The third session's hour cost about $3.70 in API
+calls, nearly all of it SAM, and an hour of footage takes one and a half to two hours on an ordinary
+laptop, no GPU. Without a Meta key, the open-weights path in [Run it](#run-it) runs the same models
+on Modal and Baseten. Or open an issue with a link to a fixed-camera recording, and I'll run it.
+
 ## What it does
 
 - **A hands-free timelapse.** The painter, their hands and tools are removed and each stroke
@@ -247,6 +280,7 @@ Open weights instead of the API (needs Hugging Face access to `facebook/sam3.1`,
 account and a Baseten key):
 
 ```
+pip install modal
 modal setup
 modal secret create huggingface HF_TOKEN=hf_...
 modal deploy scripts/sam_modal.py
