@@ -150,8 +150,8 @@ method, rebuilt from the rest of the session, and scored against what the camera
 | | Temporal median (no masks) | 3.41 | 10.9% | 25.4 |
 
 Read honestly: Piece of Mind has the lowest average error on the first two sessions and is
-slightly behind the masked median on the third, and stretch by stretch it beats the median a
-little under half the time (7 of 14, 30 of 63, 13 of 32). Where it leads, the lead comes from
+slightly behind the masked median on the third. Stretch by stretch it beats the median a little
+under half the time (7 of 14, 30 of 63, 13 of 32). Where it leads, the lead comes from
 never breaking. When the painter steps back after a long spell at the canvas, the median has
 nothing uncovered to work from: its worst stretches on the first two sessions score 21.4 and
 8.7, where Piece of Mind scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a
@@ -159,11 +159,12 @@ copy of the camera and edges ahead, and on the third session the median never br
 stretch scores 2.7). Piece of Mind's own worst stretches come early, where bare canvas and a
 pale first wash sit under its change threshold (4.8 against the median's 1.2 at 3:32 into
 session 2), and at the very end of the third session (3.3 against 2.2). That last one is the
-protocol's blind spot, below: two yellow streaks laid down just before the painter stepped back
-were first seen clear inside the hidden stretch, so the rebuild never saw them; the median
-catches part of them from glimpses between strokes. In the real output they arrive
-the second the painter steps away. The stretch is 82 of the 647 frames scored, enough to decide
-the session's average.
+persistence rule meeting the protocol: two yellow streaks laid down just before the painter
+stepped back were in clear view for two seconds before the hidden stretch began, and a change
+has to hold for eight before it counts, so the rebuild never took them; the median picks up
+part of them from those two seconds. With nothing hidden, the output has them from their first
+clear second. The stretch is 82 of the 647 frames scored, enough to decide the session's
+average.
 
 How it got here: session 1 scored 3.60 / 20.9% / 26.0 dB on Oct 31, and session 2 scored
 3.05 / 10.8% / 27.5 dB on the morning of Nov 1. Since then, exposure is measured on the room
