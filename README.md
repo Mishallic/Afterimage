@@ -1,19 +1,19 @@
-# pAInt
+# Piece of Mind
 
-**pAInt keeps it sincere.** Film yourself painting, and the footage becomes the painting's own
-record: watch it form with nobody in the way, sit back down beside it, or tap any stroke to see
-the hand that made it.
+**We gave memory to artwork.** Film yourself painting, and the footage becomes the painting's
+own memory: watch it form with nobody in the way, sit back down beside it, or tap any stroke to
+see the hand that made it.
 
-![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: pAInt at the same second.](docs/camera-vs-afterimage.jpg)
+![Left: the camera, 27 minutes into the third session, an arm across the canvas. Right: Piece of Mind at the same second.](docs/camera-vs-afterimage.jpg)
 
-*The camera 27 minutes into the third session (left), and pAInt at the same second (right).*
+*The camera 27 minutes into the third session (left), and Piece of Mind at the same second (right).*
 
 Artists have always pulled new technology into the work: new tools and surfaces, projection,
-video, computers. pAInt brings in Meta's newest vision and language models with one rule: they
-decide where the painter is, never what the painting looks like. The AI is in the name, never
-in the paint. Every pixel in the output comes from camera frames, aligned, colour-matched and
-averaged over a few frames. No generative model touches the image, nothing is invented, and a
-script checks it.
+video, computers. Piece of Mind brings in Meta's newest vision and language models with one
+rule: they decide where the painter is, never what the painting looks like. Every pixel in the
+output comes from camera frames, aligned, colour-matched and averaged over a few frames. No
+generative model touches the image and nothing is invented: what the painting remembers, the
+camera saw. A script checks it.
 
 Built for the Meta Global AI Developer Hackathon (Oct 26 – Nov 4, 2026), Indie track, theme
 *Build for Your World*: I stopped painting ten years ago, picked it back up for this, and wanted
@@ -41,9 +41,9 @@ that made it.
 - **A checkable record.** `receipt.json` holds the footage hash, the hashes of every cached
   model response, the parameters, and a hash chain over every output frame.
   `scripts/afterimage_verify.py` re-derives the whole output from the footage and the caches
-  and compares. It passes on both sessions' final runs (84 minutes and 5,023 output frames;
-  52 minutes and 3,120), every frame bit for bit, with no API key. Checkable, not proof: it
-  shows the output came from this footage through this code, nothing more.
+  and compares. It passes on all three sessions' final runs (84 minutes and 5,023 output
+  frames; 52 and 3,120; 61 and 3,686), every frame bit for bit, with no API key. Checkable, not
+  proof: it shows the output came from this footage through this code, nothing more.
 
 ## How it uses Meta's models
 
@@ -127,39 +127,54 @@ The hard cases, and what handles them:
 
 ## Evaluation
 
-### On two real sessions
+### On three real sessions
 
-Two sessions of acrylic on canvas, filmed by a phone on a tripod and processed at 1 frame a
-second: session 1 is 84 minutes (5,023 frames), session 2 is 52 minutes (3,120 frames)
-([`eval/session1-api-v3.md`](eval/session1-api-v3.md), [`eval/session2-api.md`](eval/session2-api.md)).
+Three sessions of acrylic on canvas, filmed by a phone on a tripod and processed at 1 frame a
+second: session 1 is 84 minutes (5,023 frames), session 2 is 52 minutes (3,120 frames), session
+3 is 61 minutes (3,686 frames) ([`eval/session1-api-v3.md`](eval/session1-api-v3.md),
+[`eval/session2-api.md`](eval/session2-api.md), [`eval/session3-api.md`](eval/session3-api.md)).
 The step-back protocol, described below, finds the stretches where nobody was over the canvas
-and it held still: 14 in session 1, 63 in session 2. Each was hidden from every method, rebuilt
-from the rest of the session, and scored against what the camera saw.
+and it held still: 14 in session 1, 63 in session 2, 32 in session 3. Each was hidden from every
+method, rebuilt from the rest of the session, and scored against what the camera saw.
 
 | Session | Method | ΔE00, lower is better | Pixels clearly off (ΔE00 > 5) | PSNR (dB) |
 |---|---|---|---|---|
-| 1, 84 min | pAInt | **2.92** | **16.0%** | **27.3** |
+| 1, 84 min | Piece of Mind | **2.92** | **16.0%** | **27.3** |
 | | Masked median (Loomis-style, same SAM masks) | 4.01 | 18.4% | 25.7 |
 | | Temporal median (no masks) | 5.59 | 27.2% | 21.4 |
-| 2, 52 min | pAInt | **2.24** | **6.1%** | **29.2** |
+| 2, 52 min | Piece of Mind | **2.18** | **5.7%** | **29.3** |
 | | Masked median (Loomis-style, same SAM masks) | 2.54 | 8.4% | 29.2 |
-| | Temporal median (no masks) | 3.92 | 15.4% | 25.1 |
+| | Temporal median (no masks) | 3.92 | 15.4% | 25.2 |
+| 3, 61 min | Piece of Mind | 1.86 | 3.6% | 32.0 |
+| | Masked median (Loomis-style, same SAM masks) | **1.81** | **2.3%** | **33.5** |
+| | Temporal median (no masks) | 3.41 | 10.9% | 25.4 |
 
-Read honestly: pAInt has the lowest average error on both sessions, but stretch by
-stretch it beats the masked median about half the time (7 of 14, and 30 of 63). Its lead
-comes from never breaking. When the painter steps back after a long spell at the canvas, the
-median has nothing uncovered to work from: its worst stretches score 21.4 and 8.7, where
-pAInt scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a copy of the
-camera and edges ahead. pAInt's own worst stretches come early in each session, where bare
-canvas and a pale first wash sit under its change threshold: 5.5 against the median's 1.2 at
-3:32 into session 2.
+Read honestly: Piece of Mind has the lowest average error on the first two sessions and is
+slightly behind the masked median on the third, and stretch by stretch it beats the median a
+little under half the time (7 of 14, 30 of 63, 13 of 32). Where it leads, the lead comes from
+never breaking. When the painter steps back after a long spell at the canvas, the median has
+nothing uncovered to work from: its worst stretches on the first two sessions score 21.4 and
+8.7, where Piece of Mind scores 1.6 and 1.5. On calm stretches a 10-second median is nearly a
+copy of the camera and edges ahead, and on the third session the median never broke (its worst
+stretch scores 2.7). Piece of Mind's own worst stretches come early, where bare canvas and a
+pale first wash sit under its change threshold (4.8 against the median's 1.2 at 3:32 into
+session 2), and at the very end of the third session (3.3 against 2.2). That last one is the
+protocol's blind spot, below: two yellow streaks laid down just before the painter stepped back
+were first seen clear inside the hidden stretch, so the rebuild never saw them; the median
+catches part of them from glimpses between strokes. In the real output they arrive
+the second the painter steps away. The stretch is 82 of the 647 frames scored, enough to decide
+the session's average.
 
 How it got here: session 1 scored 3.60 / 20.9% / 26.0 dB on Oct 31, and session 2 scored
 3.05 / 10.8% / 27.5 dB on the morning of Nov 1. Since then, exposure is measured on the room
 instead of the canvas, a change counts as transient only if it is undone within a minute, and
 the record follows a stroke's slow drift past 4 levels instead of 12. The last change did most
 of the work on session 2: the record had lagged what the camera showed on every stroke older
-than a minute.
+than a minute. On Nov 2 bare canvas started following the light too (session 1 was scored
+before that). On the third session the window light on the canvas fell by 20 levels over the
+first twenty minutes while the record held unpainted canvas at its first brightness; following
+it took that session from 2.86 to 1.86 and from 15.1% to 3.6% of pixels clearly off, better on
+31 of its 32 stretches.
 
 ### On synthetic scenes
 
@@ -168,7 +183,7 @@ are not a stand-in for footage.
 
 Three scenes, three methods ([`eval/synthetic.md`](eval/synthetic.md), `scripts/afterimage_bench.py`):
 
-| Scene | pAInt | Masked median (Loomis-style) | Temporal median (no masks) |
+| Scene | Piece of Mind | Masked median (Loomis-style) | Temporal median (no masks) |
 |---|---|---|---|
 | Moving hand + shadow: frames with a visible leftover | **0.0%** | 47.8% | 92.2% |
 | Resting hand + still shadow: frames with a visible leftover | **0.0%** | 55.6% | 93.3% |
@@ -178,7 +193,7 @@ The step-back protocol ([`afterimage/heldout.py`](afterimage/heldout.py), `scrip
 hides the frames where nobody is over the canvas from every method, rebuilds, and scores
 against what the camera saw there. A test shows hidden means unseen: a stroke first uncovered
 inside a hidden window is missed (5.5% of pixels off) and caught when the method is allowed
-to peek (0.3%). On the synthetic session: pAInt ΔE00 0.27, 0.35% of pixels clearly off,
+to peek (0.3%). On the synthetic session: Piece of Mind ΔE00 0.27, 0.35% of pixels clearly off,
 PSNR 39.6; masked median 0.74 / 1.14% / 28.4; temporal median 1.15 / 2.08% / 25.4.
 
 ### The critic, measured
@@ -200,8 +215,8 @@ removing; Spark catches about half of what slips past them on a painting that do
 skin, and a third or less on one that does. The second look on a crop of the rebuild alone is
 what makes acting on its answers safe: it removes most false flags while keeping the true finds
 on session 1. Asked about six images in one call instead of two, it boxed 4 of session 2's
-plants instead of 6. On both sessions' final runs the critic found nothing to fix. The loop's plumbing is covered by
-tests with SAM and Spark played by mocks.
+plants instead of 6. On all three sessions' final runs the critic found nothing to fix. The
+loop's plumbing is covered by tests with SAM and Spark played by mocks.
 
 ## Run it
 
@@ -240,7 +255,7 @@ python scripts/afterimage_run.py data/session.mp4 --masks open --corners ...    
 
 ## Filming a session
 
-What the two sessions here taught:
+What the three sessions here taught:
 
 - **Phone on a tripod, canvas clamped, easel held.** On the first session the easel crept about
   2 cm sideways under the brush, and on the third the palette knife knocked it twice. The canvas
