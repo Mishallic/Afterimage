@@ -1,6 +1,6 @@
 # Piece of Mind
 
-**We gave memory to artwork.** Film yourself painting, and the footage becomes the painting's
+**Giving memory to artwork.** Film yourself painting, and the footage becomes the painting's
 own memory: watch it form with nobody in the way, sit back down beside it, or tap any stroke to
 see the hand that made it.
 
